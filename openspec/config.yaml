@@ -1,0 +1,35 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Tauri 2 + React + TypeScript + Vite (frontend), Rust (domain/persistence), SQLite (local DB)
+  Architecture: Tauri monolith — Rust owns critical cash logic, React is presentation only
+  Testing: no test runner detected yet (Rust: cargo test; React: vitest recommended)
+  Style: no formatter/linter configured (rustfmt + eslint recommended)
+  Persistence: hybrid (Engram + OpenSpec)
+  Platform: Windows counter PC (primary), develop on macOS/Linux
+  CI: Windows installers built on Windows runners (unsigned for MVP)
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Validate stack choice against project goals before proposing
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    guidelines:
+      - Follow existing code patterns
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
