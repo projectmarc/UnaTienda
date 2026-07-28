@@ -5,6 +5,8 @@ use tauri::{Manager, State};
 
 use crate::persistence::connection::{open_pool, run_migrations, AppDb};
 
+mod application;
+mod commands;
 mod domain;
 mod persistence;
 
@@ -59,7 +61,12 @@ pub fn run() {
             app.manage(state);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![health])
+        .invoke_handler(tauri::generate_handler![
+            health,
+            commands::cash_session_commands::open_session,
+            commands::cash_session_commands::close_session,
+            commands::cash_session_commands::get_reconciliation,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
