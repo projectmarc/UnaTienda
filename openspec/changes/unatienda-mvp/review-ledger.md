@@ -209,6 +209,22 @@ Both blind judges independently verified JD2-A-001, JD2-A-002, JD2-A-003, and JD
 
 ---
 
+## Pre-push Review: Phase 2 Cash Session Domain
+
+**State:** APPROVED — no surviving BLOCKER/CRITICAL findings
+
+| id | lens | location | severity | status | evidence | assessment |
+|---|---|---|---|---|---|---|
+| R3-PUSH-P2-001 | reliability | `src/features/sessions/SessionView.tsx:13`; `src/app/App.tsx:1-8` | BLOCKER | refuted | SessionView mounting is explicitly deferred to task 7.4. The formal Phase 2 report accepted task 2.5 and retained shell mounting as an informational warning. | deferred integration, not a Phase 2 defect |
+
+### Pre-push convergence
+
+- Surviving BLOCKER/CRITICAL findings: 0
+- Refuted BLOCKER/CRITICAL findings: 1
+- Verification: Rust 78/78; frontend 9/9; builds pass
+
+---
+
 ## Judgment Day: V2-VERIFY-001 Remediation
 
 **State:** APPROVED — both blind judges found no BLOCKER/CRITICAL defects
