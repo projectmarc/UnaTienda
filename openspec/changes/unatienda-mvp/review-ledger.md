@@ -223,6 +223,12 @@ Both blind judges independently verified JD2-A-001, JD2-A-002, JD2-A-003, and JD
 - Refuted BLOCKER/CRITICAL findings: 1
 - Verification: Rust 78/78; frontend 9/9; builds pass
 
+### Initial remote Foundation pre-push check
+
+| id | lens | location | severity | status | evidence | assessment |
+|---|---|---|---|---|---|---|
+| R3-PUSH-FND-001 | reliability | `vitest.config.ts:5-10` | BLOCKER | refuted | No `.only` tests exist and all current tests pass. Missing `forbidOnly` is preventive tooling hardening, not a current implementation defect. | future hardening only |
+
 ---
 
 ## Judgment Day: V2-VERIFY-001 Remediation
