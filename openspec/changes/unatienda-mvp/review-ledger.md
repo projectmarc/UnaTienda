@@ -231,6 +231,29 @@ Both blind judges independently verified JD2-A-001, JD2-A-002, JD2-A-003, and JD
 
 ---
 
+## Pre-PR Full-4R Review: Phase 2 Cash Session Domain
+
+**State:** APPROVED — no surviving BLOCKER/CRITICAL findings
+
+| id | lens | location | severity | status | evidence | assessment |
+|---|---|---|---|---|---|---|
+| R4-P2-001 | resilience | `src-tauri/src/commands/cash_session_commands.rs:18-68` | BLOCKER | refuted | All three independent refuters found that command failures reach callers through structured IPC errors. Missing aggregate telemetry is operational hardening, not a functional MVP blocker. | refuted 3/3 |
+| R1-P2-001 | risk | `src/features/sessions/SessionView.tsx:63-65` | WARNING | info | In-flight reconciliation responses can resolve out of order and display stale values. | real informational warning |
+| R4-P2-002 | resilience | `src/features/sessions/SessionView.tsx:25-72` | WARNING | info | Debouncing does not cancel already-running reconciliation requests. | real informational warning |
+| R2-P2-001 | readability | `src/features/sessions/SessionView.tsx:20-22,74-95,149` | WARNING | info | Changing counted cash after a failed close retains the previous idempotency key and can produce a key-reuse error. | real informational warning |
+| R2-P2-002 | readability | `src/features/sessions/SessionView.tsx:25-40,49-72` | WARNING | info | Shared loading logic lacks request identity and can apply stale responses. | real informational warning |
+| R3-PR-P2-001 | reliability | `src/features/sessions/SessionView.tsx:25-72` | WARNING | info | Existing tests do not exercise out-of-order reconciliation responses. | real informational warning |
+| R3-PR-P2-002 | reliability | `src-tauri/src/commands/cash_session_commands.rs:18-20,40-42` | WARNING | info | Parse failures have a different external error shape from downstream command failures. | real informational warning |
+
+### Full-4R convergence
+
+- Surviving BLOCKER/CRITICAL findings: 0
+- Refuted BLOCKER/CRITICAL findings: 1 (3/3 refuter vote)
+- Informational warnings: 6 ledger rows, including duplicate evidence for the response-ordering risk
+- Fix rounds used: 0
+
+---
+
 ## Judgment Day: V2-VERIFY-001 Remediation
 
 **State:** APPROVED — both blind judges found no BLOCKER/CRITICAL defects
