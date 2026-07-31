@@ -396,6 +396,202 @@ R3-001 test gap closed. Test source staged with the existing Rust work unit; `ap
 
 ---
 
+## Foundation pre-PR fix round 1 — R4-001 / R4-002 / R3-003
+
+**Change:** `unatienda-mvp`
+**Project:** `unatienda`
+**Mode:** Standard with behavior-first focused regression tests
+**Work unit:** Foundation only
+**Chain strategy:** `stacked-to-main`
+**Delivery decision:** historical maintainer-approved `size:exception`
+**Boundary:** Fix only the three surviving full-4R findings. Preserve `feat/cash-session`; do not address informational `R2-001`–`R2-003` or Phase 2+ behavior.
+**Review budget impact:** 911 changed lines (883 additions, 28 deletions), including the new 130-line migration v4; covered by the historical Foundation `size:exception`.
+
+### Tasks
+
+- [x] R4-001 — Replace the failing configured all-target bundle path with the verified macOS app target and verify `tauri build` without an ad-hoc bundle override.
+- [x] R4-002 — Replace panic-only startup handling with deterministic native error guidance, durable diagnostics, and fail-closed database startup.
+- [x] R3-003 — Close open→closed ownership reassignment for all ownership-bearing financial tables in fresh and already-applied databases.
+
+### Implementation
+
+| Finding | Files | Result |
+|---|---|---|
+| R4-001 | `src-tauri/tauri.conf.json`, `src-tauri/src/lib.rs` | Configured `bundle.targets` is `["app"]`; focused config test locks the intended default; normal `npx tauri build --debug` produced `UnaTienda.app`. |
+| R4-002 | `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/src/lib.rs` | Added Tauri dialog plugin. App-data, directory creation, DB, and migration errors write append-only fsynced diagnostics (app-data preferred, temp fallback), emit stderr, show blocking recovery guidance, and abort setup before managing state. |
+| R3-003 | `src-tauri/migrations/001_initial.sql`, `002_upgrade_closed_session_immutability.sql`, `004_upgrade_closed_session_reassignment_guards.sql`, `src-tauri/src/persistence/connection.rs` | UPDATE guards inspect both OLD and NEW owners. Reversal guards use return/annulled-sale source ownership. Migration v4 replaces vulnerable guards for existing v3 databases and is registered/recorded atomically. |
+
+### Focused regression evidence
+
+| Finding | Command | Result |
+|---|---|---|
+| R4-001 | `cargo test tests::configured_bundle_target_is_the_verified_macos_app_format -- --exact` | PASS — 1/1 focused test. |
+| R4-002 | `cargo test tests::startup_database_failure_is_fail_closed_and_actionable -- --exact` | PASS — database startup failure produced durable technical details and actionable recovery guidance. |
+| R4-002 | `cargo test tests::startup_diagnostics_fall_back_when_app_data_is_unwritable -- --exact` | PASS — diagnostics used fallback storage when the preferred directory was unusable. |
+| R3-003 | `cargo test reassignment -- --nocapture` | PASS — 2/2 focused tests cover fresh schema and genuine v3→v4 upgrade behavior. |
+
+### Full verification
+
+| Check | Command | Result | Notes |
+|---|---|---|---|
+| Rust formatting | `cargo fmt --check` (from `src-tauri`) | PASS | No formatting diff after `cargo fmt`. |
+| Rust tests | `cargo test` (from `src-tauri`) | PASS | 46/46 tests pass (41 previous + 5 focused tests). |
+| Rust build | `cargo build` (from `src-tauri`) | PASS | Build succeeds; 12 pre-existing unused/dead-code warnings remain. |
+| Frontend build/typecheck | `npm run build` | PASS | TypeScript and Vite production build succeed. |
+| Frontend tests | `npm run test -- --run` | PASS | 1/1 Vitest test passes. |
+| Frontend lint | `npm run lint` | PASS | ESLint passes with zero warnings. |
+| Normal configured Tauri bundle | `npx tauri build --debug` | PASS | No `--bundles` override. Configured app target produced `src-tauri/target/debug/bundle/macos/UnaTienda.app`; DMG was not attempted. |
+| Corrected invocation after operator error | `cargo build && npx tauri build --debug` from repository root | FAILED | `cargo` could not find `Cargo.toml` at repository root, so the chained build did not run. Re-run as the two successful commands above from their correct working directories; no failure was suppressed. |
+
+### Review status
+
+- R4-001: **fixed pending scoped re-review** (refutation vote stood 2/3)
+- R4-002: **fixed pending scoped re-review** (refutation vote stood 3/3)
+- R3-003: **fixed pending scoped re-review** (refutation vote stood 3/3)
+- R2-001 / R2-002 / R2-003: `info`, intentionally unchanged
+- No item in this round is marked verified.
+
+### Risks / deviations
+
+1. The Tauri build still warns that bundle identifier `com.unatienda.app` ends in `.app`; this pre-existing warning is outside the three-finding fix boundary.
+2. Twelve pre-existing Rust unused/dead-code warnings remain outside scope.
+3. Native startup-dialog rendering is covered by the compiled Tauri plugin/API path; automated tests cover deterministic message/diagnostic behavior but do not drive an OS dialog in headless CI.
+4. No design deviation: fail-closed startup and source-owned closed-session finality reinforce the existing design.
+
+### Status
+
+3/3 surviving findings fixed pending scoped re-review. Prior apply-progress and all historical evidence above are preserved.
+
+---
+
+## Foundation pre-PR fix round 2 — R3-004 DELETE trigger test gap
+
+**Change:** `unatienda-mvp`
+**Project:** `unatienda`
+**Mode:** Standard with behavior-first focused regression tests
+**Work unit:** Foundation only
+**Chain strategy:** `stacked-to-main`
+**Delivery decision:** historical maintainer-approved `size:exception`
+**Boundary:** Fix only R3-004. Preserve all prior uncommitted round-1 changes. No Phase 2+ work, no unrelated capabilities.
+**Refutation vote:** stands 3/3
+
+### Task
+
+- [x] R3-004 — Make the v3→v4 upgrade fixture faithfully reconstruct the historical vulnerable payment-reversal DELETE trigger before migration 004 is applied. Add discriminating assertions proving migration 004 rejects deletion when the reversal source belongs to a closed session and allows deletion when the reversal source belongs to an open session.
+
+### Implementation
+
+| Finding | Files | Result |
+|---|---|---|
+| R3-004 | `src-tauri/src/persistence/connection.rs` | The v3→v4 upgrade fixture now drops and recreates the vulnerable v3 `payment_reversals` DELETE trigger (payment-sale-session ownership) alongside the UPDATE triggers. The helper `assert_closed_session_reassignment_guards` creates a closed-source reversal (return_id pointing to a return in a closed session) before closing that session, then asserts DELETE is rejected. Two additional open-source reversals (return-owned and annulment-sale-owned) are created and asserted deletable. |
+
+### Focused regression evidence
+
+| Finding | Command | Result |
+|---|---|---|
+| R3-004 | `cargo test reassignment -- --nocapture` | PASS — 2/2 focused tests cover fresh schema and genuine v3→v4 upgrade behavior. |
+
+### Full verification
+
+| Check | Command | Result | Notes |
+|---|---|---|---|
+| Rust formatting | `cargo fmt --check` (from `src-tauri`) | PASS | No formatting diff. |
+| Rust tests | `cargo test` (from `src-tauri`) | PASS | 46/46 tests pass (no new tests; existing helper exercised with new assertions). |
+| Rust build | `cargo build` (from `src-tauri`) | PASS | 12 pre-existing unused/dead-code warnings remain. |
+| Frontend build/typecheck | `npm run build` | PASS | TypeScript and Vite production build succeed. |
+| Frontend tests | `npm run test -- --run` | PASS | 1/1 Vitest test passes. |
+| Frontend lint | `npm run lint` | PASS | ESLint passes with zero warnings. |
+
+### Files Changed
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `src-tauri/src/persistence/connection.rs` | Modified | Added vulnerable v3 DELETE trigger to upgrade fixture; added closed-source reversal data and DELETE assertions to helper; added two open-source reversals for DELETE success path. |
+
+### Discriminating Assertion Proof
+
+The v3→v4 upgrade fixture now:
+1. Drops the correct DELETE trigger (from migrations 001/002/003) and recreates the vulnerable v3 version (payment-sale-session ownership).
+2. Applies migration 004, which drops the vulnerable trigger and recreates the correct source-session ownership version.
+3. The helper then proves:
+   - `reversal-return-closed` (return_id → closed session): DELETE is **rejected** ✓
+   - `reversal-return-open-2` (return_id → open session): DELETE **succeeds** ✓
+   - `reversal-annul-open-2` (annulment_sale_id → open session): DELETE **succeeds** ✓
+
+If migration 004 omitted or incorrectly implemented the DELETE replacement, the `reversal-return-closed` DELETE would succeed (wrong) or the open-source DELETEs would fail (wrong). Both would be caught.
+
+### Review status
+
+- R3-004: **fixed pending scoped re-review** (refutation vote stands 3/3)
+- R2-001 / R2-002 / R2-003: `info`, intentionally unchanged
+
+### Risks / deviations
+
+1. The annulment-sale-owned closed-source DELETE path is not independently tested in the v3→v4 fixture due to the single-open-session constraint on `cash_sessions`. The annulment path is covered by the UPDATE assertions and by the fresh-schema test. No production code change was needed.
+2. Twelve pre-existing Rust unused/dead-code warnings remain outside scope.
+3. No design deviation: the fix adds test coverage only; no production code was changed.
+
+### Round-2 diff boundary
+
+| File | Insertions | Deletions | Total |
+|------|------------|-----------|-------|
+| `src-tauri/src/persistence/connection.rs` | 332 | 2 | 334 |
+| **Total** | **332** | **2** | **334** |
+
+### Status
+
+R3-004 fixed pending scoped re-review. All 46/46 Rust tests pass, all frontend checks pass.
+
+---
+
+## Separate-remediation recovery — R3-004 cancelled residue (2026-07-31)
+
+**Change:** `unatienda-mvp`
+**Project:** `unatienda`
+**Mode:** Standard with focused behavior regression coverage
+**Work unit:** Separate R3-004 recovery only
+**Chain strategy:** `stacked-to-main` (inherited; no PR or commit created)
+**Boundary:** Remove only the cancelled unsafe residue, restore the coherent round-2 helper boundary, and add the upgrade-only annulment DELETE discriminator. All Foundation round-1 and round-2 changes remain preserved.
+**Status:** R3-004 **fixed pending fresh scoped review** — **not verified**.
+
+### Recovery implementation
+
+- Removed the cancelled Phase 3 residue from `assert_closed_session_reassignment_guards`, including the unsafe Case B attempt that inserted `reversal-annul-discriminating-b` after closing `session-annul-closed`.
+- Preserved the valid return-owned DELETE rejection/success cases and closed-session reassignment assertions.
+- Added `assert_annulment_owned_delete_guard` and invoked it only from `migration_v4_closes_reassignment_gap_for_existing_v3_database`.
+- The new upgrade-only fixture sequence is:
+  1. Open session A (`session-annulment-payment`); create the original sale and payment; close A.
+  2. Open session B (`session-annulment-source`); create the annulment sale and reversal while B is open, so the existing INSERT guard permits setup.
+  3. DELETE the reversal while B is open.
+- The v3→v4 fixture continues to recreate the historical payment-sale-owned DELETE trigger before migration 004. Consequently, migration 004 must replace that trigger with annulment-sale source ownership: a missing replacement or retained payment ownership observes closed A and rejects the expected DELETE.
+- No production code, migration, startup handling, bundle configuration, or prior valid test coverage was reverted or changed. The complementary closed-annulment/open-payment direction was intentionally not added because it cannot be seeded under the one-open-session and source-owned INSERT constraints without bypassing a guard.
+
+### Exact command results
+
+| Command (working directory) | Result |
+|---|---|
+| `cargo test reassignment -- --nocapture` (before recovery) | **FAIL** — running 2 tests; 0 passed, 2 failed. Both failed at the helper unwrap with SQLite `ConstraintViolation` / `cannot insert records into a closed session`. |
+| `cargo test reassignment -- --nocapture` (after recovery) | **PASS** — 2 focused tests passed, 0 failed; 44 tests filtered out. |
+| `cargo fmt --check` | **PASS** — exit 0, no output. |
+| `cargo test` | **PASS** — 46/46 Rust library tests passed; main target and doc-tests passed with 0 failures. Existing compiler warnings remain. |
+| `git diff --check -- src-tauri/src/persistence/connection.rs` | **PASS** — no output. |
+
+Frontend checks were not required: this recovery unit changes only Rust persistence test fixture/helper code and no frontend/shared artifact.
+
+### Discriminating assertion proof
+
+- Correct migration 004: session B owns `annulment_sale_id` and is open, so DELETE succeeds.
+- Migration 004 omitted or retaining the historical payment-sale predicate: session A owns the payment and is closed, so the same DELETE fails and the focused upgrade test fails.
+- Existing return-owned closed-source rejection and open-source success cases remain active in the shared helper.
+
+### Review status
+
+- R3-004: **fixed pending fresh scoped review** — not verified.
+- Prior apply-progress sections and passing claims remain as historical evidence; this recovery entry is the current remediation status and does not overwrite that history.
+- Next recommendation: perform a fresh scoped R3-004 review, then verify only if that review passes.
+
+---
+
 ## Phase 2: Cash Session Domain — Work Unit
 
 **Change:** `unatienda-mvp`

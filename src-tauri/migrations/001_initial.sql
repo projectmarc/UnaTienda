@@ -157,6 +157,9 @@ FOR EACH ROW
 WHEN EXISTS (
     SELECT 1 FROM cash_sessions WHERE id = OLD.session_id AND status = 'closed'
 )
+OR EXISTS (
+    SELECT 1 FROM cash_sessions WHERE id = NEW.session_id AND status = 'closed'
+)
 BEGIN
     SELECT RAISE(ABORT, 'closed session records are immutable');
 END;
@@ -178,6 +181,11 @@ WHEN EXISTS (
     SELECT 1 FROM cash_sessions cs
     JOIN sales s ON s.session_id = cs.id
     WHERE s.id = OLD.sale_id AND cs.status = 'closed'
+)
+OR EXISTS (
+    SELECT 1 FROM cash_sessions cs
+    JOIN sales s ON s.session_id = cs.id
+    WHERE s.id = NEW.sale_id AND cs.status = 'closed'
 )
 BEGIN
     SELECT RAISE(ABORT, 'closed session records are immutable');
@@ -201,6 +209,9 @@ FOR EACH ROW
 WHEN EXISTS (
     SELECT 1 FROM cash_sessions WHERE id = OLD.session_id AND status = 'closed'
 )
+OR EXISTS (
+    SELECT 1 FROM cash_sessions WHERE id = NEW.session_id AND status = 'closed'
+)
 BEGIN
     SELECT RAISE(ABORT, 'closed session records are immutable');
 END;
@@ -220,6 +231,9 @@ BEFORE UPDATE ON drafts
 FOR EACH ROW
 WHEN EXISTS (
     SELECT 1 FROM cash_sessions WHERE id = OLD.session_id AND status = 'closed'
+)
+OR EXISTS (
+    SELECT 1 FROM cash_sessions WHERE id = NEW.session_id AND status = 'closed'
 )
 BEGIN
     SELECT RAISE(ABORT, 'closed session records are immutable');
@@ -241,6 +255,9 @@ FOR EACH ROW
 WHEN EXISTS (
     SELECT 1 FROM cash_sessions WHERE id = OLD.session_id AND status = 'closed'
 )
+OR EXISTS (
+    SELECT 1 FROM cash_sessions WHERE id = NEW.session_id AND status = 'closed'
+)
 BEGIN
     SELECT RAISE(ABORT, 'closed session records are immutable');
 END;
@@ -259,10 +276,24 @@ CREATE TRIGGER IF NOT EXISTS trg_guard_closed_session_payment_reversals_update
 BEFORE UPDATE ON payment_reversals
 FOR EACH ROW
 WHEN EXISTS (
-    SELECT 1 FROM cash_sessions cs
-    JOIN payments p ON p.id = OLD.payment_id
-    JOIN sales s ON s.id = p.sale_id
-    WHERE cs.id = s.session_id AND cs.status = 'closed'
+    SELECT 1 FROM returns r
+    JOIN cash_sessions cs ON cs.id = r.session_id
+    WHERE r.id = OLD.return_id AND cs.status = 'closed'
+)
+OR EXISTS (
+    SELECT 1 FROM sales s
+    JOIN cash_sessions cs ON cs.id = s.session_id
+    WHERE s.id = OLD.annulment_sale_id AND cs.status = 'closed'
+)
+OR EXISTS (
+    SELECT 1 FROM returns r
+    JOIN cash_sessions cs ON cs.id = r.session_id
+    WHERE r.id = NEW.return_id AND cs.status = 'closed'
+)
+OR EXISTS (
+    SELECT 1 FROM sales s
+    JOIN cash_sessions cs ON cs.id = s.session_id
+    WHERE s.id = NEW.annulment_sale_id AND cs.status = 'closed'
 )
 BEGIN
     SELECT RAISE(ABORT, 'closed session records are immutable');
@@ -272,10 +303,14 @@ CREATE TRIGGER IF NOT EXISTS trg_guard_closed_session_payment_reversals_delete
 BEFORE DELETE ON payment_reversals
 FOR EACH ROW
 WHEN EXISTS (
-    SELECT 1 FROM cash_sessions cs
-    JOIN payments p ON p.id = OLD.payment_id
-    JOIN sales s ON s.id = p.sale_id
-    WHERE cs.id = s.session_id AND cs.status = 'closed'
+    SELECT 1 FROM returns r
+    JOIN cash_sessions cs ON cs.id = r.session_id
+    WHERE r.id = OLD.return_id AND cs.status = 'closed'
+)
+OR EXISTS (
+    SELECT 1 FROM sales s
+    JOIN cash_sessions cs ON cs.id = s.session_id
+    WHERE s.id = OLD.annulment_sale_id AND cs.status = 'closed'
 )
 BEGIN
     SELECT RAISE(ABORT, 'closed session records are immutable');

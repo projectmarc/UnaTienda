@@ -94,3 +94,9 @@ Chain strategy: stacked-to-main
 - [ ] 7.4 Create `src/app/App.tsx` and `src/app/router.tsx`: feature-folder routing, state reload after mutations, layout with session context provider
 - [ ] 7.5 Write end-to-end test: full session lifecycle from open through sales, returns, movements, to close, verifying expected cash and immutability
 - [ ] 7.6 Update `README.md` with build instructions, SmartScreen warning documentation, and architecture overview
+
+## Foundation pre-PR fix round 1
+
+- [x] FPR-1 Fix R4-001 by limiting the configured macOS bundle path to the verified app format and verify the normal configured build command
+- [x] FPR-2 Fix R4-002 with fail-closed startup errors, blocking user recovery guidance, and durable diagnostics with fallback storage
+- [x] FPR-3 Fix R3-003 for fresh and existing databases by rejecting ownership reassignment into closed sessions and adding discriminating regression tests
