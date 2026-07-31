@@ -1,42 +1,101 @@
+@import "tailwindcss";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@theme inline {
+  --font-sans: "Geist Variable", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+
+  --color-background: var(--receipt-paper);
+  --color-foreground: var(--graphite);
+  --color-card: var(--paper-raised);
+  --color-card-foreground: var(--graphite);
+  --color-popover: var(--paper-raised);
+  --color-popover-foreground: var(--graphite);
+  --color-primary: var(--cash-green);
+  --color-primary-foreground: var(--cash-green-foreground);
+  --color-secondary: var(--paper-inset);
+  --color-secondary-foreground: var(--graphite);
+  --color-muted: var(--paper-inset);
+  --color-muted-foreground: var(--graphite-muted);
+  --color-accent: var(--cash-green-soft);
+  --color-accent-foreground: var(--cash-green-strong);
+  --color-destructive: var(--accounting-red);
+  --color-destructive-foreground: var(--accounting-red-foreground);
+  --color-warning: var(--ledger-amber);
+  --color-warning-foreground: var(--ledger-amber-foreground);
+  --color-success: var(--cash-green);
+  --color-success-foreground: var(--cash-green-foreground);
+  --color-foreground-secondary: var(--graphite-secondary);
+  --color-foreground-tertiary: var(--graphite-tertiary);
+  --color-border: var(--graphite-rule);
+  --color-border-subtle: var(--graphite-rule-subtle);
+  --color-border-strong: var(--graphite-rule-strong);
+  --color-input: var(--control-border);
+  --color-ring: var(--cash-green);
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+}
+
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  color-scheme: light;
+  --receipt-paper: #f4efe3;
+  --paper-raised: #f8f3e8;
+  --paper-inset: #ebe4d6;
+  --graphite: #292b28;
+  --graphite-secondary: #4b4e49;
+  --graphite-tertiary: #686b65;
+  --graphite-muted: #767970;
+  --graphite-rule: rgb(41 43 40 / 18%);
+  --graphite-rule-subtle: rgb(41 43 40 / 10%);
+  --graphite-rule-strong: rgb(41 43 40 / 34%);
+  --control-border: rgb(41 43 40 / 28%);
+  --cash-green: #45644c;
+  --cash-green-strong: #304938;
+  --cash-green-soft: #dce6d9;
+  --cash-green-foreground: #fffaf0;
+  --ledger-amber: #a26318;
+  --ledger-amber-foreground: #fff8e8;
+  --accounting-red: #a43d35;
+  --accounting-red-foreground: #fff8f3;
 }
 
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply bg-background font-sans text-foreground;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply m-0 min-w-80 bg-background text-foreground antialiased;
+    min-height: 100vh;
+  }
+
+  button:not(:disabled) {
+    cursor: pointer;
+  }
 }
 
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+@utility money {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.02em;
 }
 
-.container {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
