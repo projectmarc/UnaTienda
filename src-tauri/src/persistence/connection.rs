@@ -8,7 +8,7 @@ use crate::domain::error::AppError;
 
 use std::collections::HashSet;
 
-const MIGRATIONS: [(i64, &str); 3] = [
+const MIGRATIONS: [(i64, &str); 4] = [
     (1, include_str!("../../migrations/001_initial.sql")),
     (
         2,
@@ -17,6 +17,10 @@ const MIGRATIONS: [(i64, &str); 3] = [
     (
         3,
         include_str!("../../migrations/003_upgrade_closed_session_insert_guards.sql"),
+    ),
+    (
+        4,
+        include_str!("../../migrations/004_upgrade_closed_session_reassignment_guards.sql"),
     ),
 ];
 
@@ -318,7 +322,7 @@ mod tests {
             assert!(tables.contains(&"schema_migrations".to_string()));
             assert!(tables.contains(&"backup_runs".to_string()));
 
-            for version in [1, 2, 3] {
+            for version in [1, 2, 3, 4] {
                 let migrations: i64 = conn
                     .query_row(
                         "SELECT count(*) FROM schema_migrations WHERE version = ?1",
@@ -1497,6 +1501,398 @@ mod tests {
             );
 
             Ok::<_, rusqlite::Error>(())
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    }
+
+    fn assert_closed_session_reassignment_guards(conn: &Connection) -> rusqlite::Result<()> {
+        // ============================================================
+        // Phase 1: closed-source records (close session, then test DELETE rejection)
+        // ============================================================
+        conn.execute(
+            "INSERT INTO cash_sessions (id, status, opening_amount, opened_at) VALUES (?1, ?2, ?3, ?4)",
+            ["session-closed", "open", "1000", "2024-02-01T00:00:00Z"],
+        )?;
+        conn.execute(
+            "INSERT INTO sales (id, session_id, total_amount, status) VALUES (?1, ?2, ?3, ?4)",
+            ["sale-closed", "session-closed", "1000", "confirmed"],
+        )?;
+        conn.execute(
+            "INSERT INTO payments (id, sale_id, method, amount) VALUES (?1, ?2, ?3, ?4)",
+            ["payment-closed", "sale-closed", "cash", "1000"],
+        )?;
+        conn.execute(
+            "INSERT INTO returns (id, session_id, sale_id, return_kind, amount) VALUES (?1, ?2, ?3, ?4, ?5)",
+            [
+                "return-closed",
+                "session-closed",
+                "sale-closed",
+                "total",
+                "1000",
+            ],
+        )?;
+        // Closed-source reversal: insert while session is still open so the
+        // INSERT guard does not block it. The DELETE guard must reject deletion
+        // because the return's session is closed.
+        conn.execute(
+            "INSERT INTO payment_reversals (id, payment_id, amount, return_id) VALUES (?1, ?2, ?3, ?4)",
+            ["reversal-return-closed", "payment-closed", "100", "return-closed"],
+        )?;
+        conn.execute(
+            "UPDATE cash_sessions SET status = 'closed', counted_cash = 1000, difference = 0, closed_at = ?2 WHERE id = ?1 AND status = 'open'",
+            ["session-closed", "2024-02-01T23:00:00Z"],
+        )?;
+
+        // ============================================================
+        // Phase 2: open-session records for UPDATE/DELETE rejection tests
+        // ============================================================
+        conn.execute(
+            "INSERT INTO cash_sessions (id, status, opening_amount, opened_at) VALUES (?1, ?2, ?3, ?4)",
+            ["session-open", "open", "1000", "2024-02-02T00:00:00Z"],
+        )?;
+        conn.execute(
+            "INSERT INTO sales (id, session_id, total_amount, status) VALUES (?1, ?2, ?3, ?4)",
+            ["sale-open", "session-open", "1000", "confirmed"],
+        )?;
+        conn.execute(
+            "INSERT INTO sales (id, session_id, total_amount, status) VALUES (?1, ?2, ?3, ?4)",
+            ["sale-open-alt", "session-open", "1000", "confirmed"],
+        )?;
+        conn.execute(
+            "INSERT INTO payments (id, sale_id, method, amount) VALUES (?1, ?2, ?3, ?4)",
+            ["payment-open", "sale-open", "cash", "1000"],
+        )?;
+        conn.execute(
+            "INSERT INTO movements (id, session_id, kind, amount) VALUES (?1, ?2, ?3, ?4)",
+            ["movement-open", "session-open", "income", "100"],
+        )?;
+        conn.execute(
+            "INSERT INTO drafts (id, session_id, total_amount) VALUES (?1, ?2, ?3)",
+            ["draft-open", "session-open", "500"],
+        )?;
+        conn.execute(
+            "INSERT INTO returns (id, session_id, sale_id, return_kind, amount) VALUES (?1, ?2, ?3, ?4, ?5)",
+            [
+                "return-open",
+                "session-open",
+                "sale-closed",
+                "partial",
+                "100",
+            ],
+        )?;
+        conn.execute(
+            "INSERT INTO payment_reversals (id, payment_id, amount, return_id) VALUES (?1, ?2, ?3, ?4)",
+            ["reversal-return-open", "payment-closed", "100", "return-open"],
+        )?;
+        conn.execute(
+            "INSERT INTO payment_reversals (id, payment_id, amount, annulment_sale_id) VALUES (?1, ?2, ?3, ?4)",
+            [
+                "reversal-annul-open",
+                "payment-open",
+                "100",
+                "sale-open-alt",
+            ],
+        )?;
+        // Extra open-source reversal reserved for the return-owned DELETE success assertion.
+        conn.execute(
+            "INSERT INTO payment_reversals (id, payment_id, amount, return_id) VALUES (?1, ?2, ?3, ?4)",
+            ["reversal-return-open-2", "payment-closed", "50", "return-open"],
+        )?;
+
+        // Normal updates within the open session remain allowed.
+        conn.execute(
+            "UPDATE sales SET total_amount = 1100 WHERE id = ?1",
+            ["sale-open"],
+        )?;
+        conn.execute(
+            "UPDATE payments SET sale_id = ?2, amount = 900 WHERE id = ?1",
+            ["payment-open", "sale-open-alt"],
+        )?;
+        conn.execute(
+            "UPDATE movements SET amount = 200 WHERE id = ?1",
+            ["movement-open"],
+        )?;
+        conn.execute(
+            "UPDATE drafts SET total_amount = 600 WHERE id = ?1",
+            ["draft-open"],
+        )?;
+        conn.execute(
+            "UPDATE returns SET amount = 150 WHERE id = ?1",
+            ["return-open"],
+        )?;
+        conn.execute(
+            "UPDATE payment_reversals SET amount = 90 WHERE id = ?1",
+            ["reversal-return-open"],
+        )?;
+        conn.execute(
+            "UPDATE payment_reversals SET amount = 90 WHERE id = ?1",
+            ["reversal-annul-open"],
+        )?;
+
+        // Every ownership path rejects reassignment from open into closed.
+        assert!(
+            conn.execute(
+                "UPDATE sales SET session_id = ?2 WHERE id = ?1",
+                ["sale-open", "session-closed"],
+            )
+            .is_err(),
+            "sale must not be reassigned into a closed session"
+        );
+        assert!(
+            conn.execute(
+                "UPDATE payments SET sale_id = ?2 WHERE id = ?1",
+                ["payment-open", "sale-closed"],
+            )
+            .is_err(),
+            "payment must not be reassigned to a closed-session sale"
+        );
+        assert!(
+            conn.execute(
+                "UPDATE movements SET session_id = ?2 WHERE id = ?1",
+                ["movement-open", "session-closed"],
+            )
+            .is_err(),
+            "movement must not be reassigned into a closed session"
+        );
+        assert!(
+            conn.execute(
+                "UPDATE drafts SET session_id = ?2 WHERE id = ?1",
+                ["draft-open", "session-closed"],
+            )
+            .is_err(),
+            "draft must not be reassigned into a closed session"
+        );
+        assert!(
+            conn.execute(
+                "UPDATE returns SET session_id = ?2 WHERE id = ?1",
+                ["return-open", "session-closed"],
+            )
+            .is_err(),
+            "return must not be reassigned into a closed session"
+        );
+        assert!(
+            conn.execute(
+                "UPDATE payment_reversals SET return_id = ?2 WHERE id = ?1",
+                ["reversal-return-open", "return-closed"],
+            )
+            .is_err(),
+            "return reversal must not be reassigned to a closed-session return"
+        );
+        assert!(
+            conn.execute(
+                "UPDATE payment_reversals SET annulment_sale_id = ?2 WHERE id = ?1",
+                ["reversal-annul-open", "sale-closed"],
+            )
+            .is_err(),
+            "annulment reversal must not be reassigned to a closed-session sale"
+        );
+
+        // DELETE guard: return-owned reversal with closed source session is rejected.
+        assert!(
+            conn.execute(
+                "DELETE FROM payment_reversals WHERE id = ?1",
+                ["reversal-return-closed"],
+            )
+            .is_err(),
+            "return reversal must not be deleted when the return session is closed"
+        );
+        // Open-source reversals remain deletable (return-owned path).
+        conn.execute(
+            "DELETE FROM payment_reversals WHERE id = ?1",
+            ["reversal-return-open-2"],
+        )?;
+
+        // Leave no open session for the upgrade-only annulment DELETE fixture.
+        conn.execute(
+            "UPDATE cash_sessions SET status = 'closed', counted_cash = 1000, difference = 0, closed_at = ?2 WHERE id = ?1 AND status = 'open'",
+            ["session-open", "2024-02-02T23:00:00Z"],
+        )?;
+
+        Ok(())
+    }
+
+    /// Prove the v3→v4 DELETE trigger uses annulment-sale ownership rather than
+    /// the historical payment-sale ownership predicate.
+    ///
+    /// The original payment is created in session A and A is closed before
+    /// session B is opened. The annulment sale and reversal are then created
+    /// while B is open, which satisfies the INSERT guard. DELETE must succeed
+    /// because B owns the reversal source; the historical payment-owned DELETE
+    /// trigger would reject it because A is closed.
+    fn assert_annulment_owned_delete_guard(conn: &Connection) -> rusqlite::Result<()> {
+        conn.execute(
+            "INSERT INTO cash_sessions (id, status, opening_amount, opened_at) VALUES (?1, ?2, ?3, ?4)",
+            ["session-annulment-payment", "open", "1000", "2024-02-03T00:00:00Z"],
+        )?;
+        conn.execute(
+            "INSERT INTO sales (id, session_id, total_amount, status) VALUES (?1, ?2, ?3, ?4)",
+            [
+                "sale-annulment-payment",
+                "session-annulment-payment",
+                "1000",
+                "confirmed",
+            ],
+        )?;
+        conn.execute(
+            "INSERT INTO payments (id, sale_id, method, amount) VALUES (?1, ?2, ?3, ?4)",
+            [
+                "payment-annulment-payment",
+                "sale-annulment-payment",
+                "cash",
+                "1000",
+            ],
+        )?;
+        conn.execute(
+            "UPDATE cash_sessions SET status = 'closed', counted_cash = 1000, difference = 0, closed_at = ?2 WHERE id = ?1 AND status = 'open'",
+            [
+                "session-annulment-payment",
+                "2024-02-03T23:00:00Z",
+            ],
+        )?;
+
+        conn.execute(
+            "INSERT INTO cash_sessions (id, status, opening_amount, opened_at) VALUES (?1, ?2, ?3, ?4)",
+            ["session-annulment-source", "open", "1000", "2024-02-04T00:00:00Z"],
+        )?;
+        conn.execute(
+            "INSERT INTO sales (id, session_id, total_amount, status) VALUES (?1, ?2, ?3, ?4)",
+            [
+                "sale-annulment-source",
+                "session-annulment-source",
+                "1000",
+                "confirmed",
+            ],
+        )?;
+        conn.execute(
+            "INSERT INTO payment_reversals (id, payment_id, amount, annulment_sale_id) VALUES (?1, ?2, ?3, ?4)",
+            [
+                "reversal-annulment-delete",
+                "payment-annulment-payment",
+                "100",
+                "sale-annulment-source",
+            ],
+        )?;
+
+        conn.execute(
+            "DELETE FROM payment_reversals WHERE id = ?1",
+            ["reversal-annulment-delete"],
+        )?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn closed_session_reassignment_is_rejected_on_fresh_schema() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = open_pool(&db_path).await.unwrap();
+        run_migrations(&pool, &db_path).await.unwrap();
+        let conn = pool.get().await.unwrap();
+        conn.interact(|conn| assert_closed_session_reassignment_guards(conn))
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn migration_v4_closes_reassignment_gap_for_existing_v3_database() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(include_str!("../../migrations/001_initial.sql"))
+                .unwrap();
+            conn.execute_batch(include_str!(
+                "../../migrations/002_upgrade_closed_session_immutability.sql"
+            ))
+            .unwrap();
+            conn.execute_batch(include_str!(
+                "../../migrations/003_upgrade_closed_session_insert_guards.sql"
+            ))
+            .unwrap();
+
+            // Recreate the vulnerable version-3 UPDATE guards, which inspected
+            // only OLD ownership and therefore allowed open -> closed moves.
+            // Also recreate the vulnerable v3 DELETE guard for payment_reversals,
+            // which checked the payment's sale session instead of source ownership.
+            conn.execute_batch(
+                r#"
+                DROP TRIGGER trg_guard_closed_session_sales_update;
+                DROP TRIGGER trg_guard_closed_session_payments_update;
+                DROP TRIGGER trg_guard_closed_session_movements_update;
+                DROP TRIGGER trg_guard_closed_session_drafts_update;
+                DROP TRIGGER trg_guard_closed_session_returns_update;
+                DROP TRIGGER trg_guard_closed_session_payment_reversals_update;
+                DROP TRIGGER trg_guard_closed_session_payment_reversals_delete;
+
+                CREATE TRIGGER trg_guard_closed_session_sales_update
+                BEFORE UPDATE ON sales FOR EACH ROW
+                WHEN EXISTS (SELECT 1 FROM cash_sessions WHERE id = OLD.session_id AND status = 'closed')
+                BEGIN SELECT RAISE(ABORT, 'closed session records are immutable'); END;
+
+                CREATE TRIGGER trg_guard_closed_session_payments_update
+                BEFORE UPDATE ON payments FOR EACH ROW
+                WHEN EXISTS (
+                    SELECT 1 FROM cash_sessions cs
+                    JOIN sales s ON s.session_id = cs.id
+                    WHERE s.id = OLD.sale_id AND cs.status = 'closed'
+                )
+                BEGIN SELECT RAISE(ABORT, 'closed session records are immutable'); END;
+
+                CREATE TRIGGER trg_guard_closed_session_movements_update
+                BEFORE UPDATE ON movements FOR EACH ROW
+                WHEN EXISTS (SELECT 1 FROM cash_sessions WHERE id = OLD.session_id AND status = 'closed')
+                BEGIN SELECT RAISE(ABORT, 'closed session records are immutable'); END;
+
+                CREATE TRIGGER trg_guard_closed_session_drafts_update
+                BEFORE UPDATE ON drafts FOR EACH ROW
+                WHEN EXISTS (SELECT 1 FROM cash_sessions WHERE id = OLD.session_id AND status = 'closed')
+                BEGIN SELECT RAISE(ABORT, 'closed session records are immutable'); END;
+
+                CREATE TRIGGER trg_guard_closed_session_returns_update
+                BEFORE UPDATE ON returns FOR EACH ROW
+                WHEN EXISTS (SELECT 1 FROM cash_sessions WHERE id = OLD.session_id AND status = 'closed')
+                BEGIN SELECT RAISE(ABORT, 'closed session records are immutable'); END;
+
+                CREATE TRIGGER trg_guard_closed_session_payment_reversals_update
+                BEFORE UPDATE ON payment_reversals FOR EACH ROW
+                WHEN EXISTS (
+                    SELECT 1 FROM cash_sessions cs
+                    JOIN payments p ON p.id = OLD.payment_id
+                    JOIN sales s ON s.id = p.sale_id
+                    WHERE cs.id = s.session_id AND cs.status = 'closed'
+                )
+                BEGIN SELECT RAISE(ABORT, 'closed session records are immutable'); END;
+
+                CREATE TRIGGER trg_guard_closed_session_payment_reversals_delete
+                BEFORE DELETE ON payment_reversals FOR EACH ROW
+                WHEN EXISTS (
+                    SELECT 1 FROM cash_sessions cs
+                    JOIN payments p ON p.id = OLD.payment_id
+                    JOIN sales s ON s.id = p.sale_id
+                    WHERE cs.id = s.session_id AND cs.status = 'closed'
+                )
+                BEGIN SELECT RAISE(ABORT, 'closed session records are immutable'); END;
+                "#,
+            )
+            .unwrap();
+        }
+
+        let pool = open_pool(&db_path).await.unwrap();
+        run_migrations(&pool, &db_path).await.unwrap();
+        let conn = pool.get().await.unwrap();
+        conn.interact(|conn| {
+            let version_4: i64 = conn.query_row(
+                "SELECT count(*) FROM schema_migrations WHERE version = 4",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(version_4, 1, "migration v4 must be recorded");
+            assert_closed_session_reassignment_guards(conn)?;
+            assert_annulment_owned_delete_guard(conn)
         })
         .await
         .unwrap()
