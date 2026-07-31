@@ -5,6 +5,7 @@ import SessionView from "./SessionView";
 
 // Mock the Tauri command adapter.
 vi.mock("../../shared/tauri/commands", () => ({
+  openSession: vi.fn(),
   getReconciliation: vi.fn(),
   closeSession: vi.fn(),
 }));
@@ -12,8 +13,10 @@ vi.mock("../../shared/tauri/commands", () => ({
 import {
   getReconciliation,
   closeSession,
+  openSession,
 } from "../../shared/tauri/commands";
 
+const mockOpenSession = vi.mocked(openSession);
 const mockGetReconciliation = vi.mocked(getReconciliation);
 const mockCloseSession = vi.mocked(closeSession);
 
@@ -25,7 +28,9 @@ describe("SessionView", () => {
   it("displays loading state initially", () => {
     mockGetReconciliation.mockReturnValue(new Promise(() => {})); // never resolves
     render(<SessionView />);
-    expect(screen.getByText("Loading session...")).toBeInTheDocument();
+    expect(
+      screen.getByText("Consultando la sesión de caja…"),
+    ).toBeInTheDocument();
   });
 
   it("displays reconciliation data on load", async () => {
@@ -48,14 +53,72 @@ describe("SessionView", () => {
     expect(screen.getByText("Expected Cash")).toBeInTheDocument();
   });
 
-  it("displays no open session message when no session", async () => {
+  it("displays the opening form when no session exists", async () => {
     mockGetReconciliation.mockRejectedValue("NO_OPEN_SESSION");
 
     render(<SessionView />);
 
     await waitFor(() => {
-      expect(screen.getByText("No open session.")).toBeInTheDocument();
+      expect(screen.getByLabelText("Efectivo inicial")).toBeInTheDocument();
     });
+  });
+
+  it("opens a session and displays its reconciliation", async () => {
+    const user = userEvent.setup();
+    mockGetReconciliation
+      .mockRejectedValueOnce("NO_OPEN_SESSION")
+      .mockResolvedValueOnce({
+        sessionId: "test-session",
+        openingAmount: "50.00",
+        expectedCash: "50.00",
+      });
+    mockOpenSession.mockResolvedValue({
+      sessionId: "test-session",
+      openingAmount: "50.00",
+    });
+
+    render(<SessionView />);
+
+    await user.type(await screen.findByLabelText("Efectivo inicial"), "50.00");
+    await user.click(screen.getByRole("button", { name: "Abrir caja" }));
+
+    await waitFor(() => {
+      expect(mockOpenSession).toHaveBeenCalledWith("50.00", expect.any(String));
+      expect(mockGetReconciliation).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText("Open Cash Session")).toBeInTheDocument();
+  });
+
+  it("reuses the opening key when retrying a recoverable error", async () => {
+    const user = userEvent.setup();
+    mockGetReconciliation.mockRejectedValue("NO_OPEN_SESSION");
+    mockOpenSession
+      .mockRejectedValueOnce("CONNECTION_LOST")
+      .mockRejectedValueOnce("CONNECTION_LOST");
+
+    render(<SessionView />);
+
+    await user.type(await screen.findByLabelText("Efectivo inicial"), "25.00");
+    await user.click(screen.getByRole("button", { name: "Abrir caja" }));
+    await screen.findByRole("alert");
+    await user.click(
+      screen.getByRole("button", { name: "Reintentar apertura" }),
+    );
+
+    await waitFor(() => expect(mockOpenSession).toHaveBeenCalledTimes(2));
+    expect(mockOpenSession.mock.calls[0][1]).toBe(
+      mockOpenSession.mock.calls[1][1],
+    );
+  });
+
+  it("localizes reconciliation query failures", async () => {
+    mockGetReconciliation.mockRejectedValue("CONNECTION_LOST");
+
+    render(<SessionView />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No se pudo consultar la sesión de caja.",
+    );
   });
 
   it("calls getReconciliation with counted cash for exact difference", async () => {

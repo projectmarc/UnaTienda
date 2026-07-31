@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   closeSession,
   getReconciliation,
+  openSession,
   type ClosedSessionResponse,
   type ReconciliationView,
 } from "../../shared/tauri/commands";
@@ -12,11 +13,14 @@ function generateIdempotencyKey(): string {
 
 export default function SessionView() {
   const [session, setSession] = useState<ReconciliationView | null>(null);
+  const [openingAmount, setOpeningAmount] = useState("");
   const [countedCash, setCountedCash] = useState("");
   const [closedResult, setClosedResult] = useState<ClosedSessionResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [opening, setOpening] = useState(false);
   const [closing, setClosing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const openKeyRef = useRef<string | null>(null);
   // JD2-B-001 fix: persist the idempotency key across retries for the same close attempt.
   // A new key is generated only when a fresh close begins (not on retry).
   const closeKeyRef = useRef<string | null>(null);
@@ -33,7 +37,7 @@ export default function SessionView() {
       if (msg.includes("NO_OPEN_SESSION") || msg.includes("no open session")) {
         setSession(null);
       } else {
-        setError(msg);
+        setError("No se pudo consultar la sesión de caja. Inténtalo de nuevo.");
       }
     } finally {
       setLoading(false);
@@ -71,6 +75,28 @@ export default function SessionView() {
     };
   }, [countedCash, loadSession]);
 
+  const handleOpen = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!openingAmount.trim()) return;
+    if (!openKeyRef.current) {
+      openKeyRef.current = generateIdempotencyKey();
+    }
+
+    try {
+      setOpening(true);
+      setError(null);
+      await openSession(openingAmount.trim(), openKeyRef.current);
+      await loadSession();
+      openKeyRef.current = null;
+    } catch {
+      setError(
+        "No se pudo abrir la caja. Revisa la conexión e inténtalo de nuevo.",
+      );
+    } finally {
+      setOpening(false);
+    }
+  };
+
   const handleClose = async () => {
     if (!session || !countedCash.trim()) return;
 
@@ -98,7 +124,7 @@ export default function SessionView() {
   if (loading && !session) {
     return (
       <div className="container">
-        <p>Loading session...</p>
+        <p role="status">Consultando la sesión de caja…</p>
       </div>
     );
   }
@@ -124,7 +150,27 @@ export default function SessionView() {
   if (!session) {
     return (
       <div className="container">
-        <p>No open session.</p>
+        <h2>Abrir sesión de caja</h2>
+        <form onSubmit={handleOpen}>
+          <label htmlFor="opening-amount">Efectivo inicial</label>
+          <input
+            disabled={opening}
+            id="opening-amount"
+            inputMode="decimal"
+            onChange={(event) => setOpeningAmount(event.target.value)}
+            placeholder="0.00"
+            type="text"
+            value={openingAmount}
+          />
+          {error && <p role="alert">{error}</p>}
+          <button disabled={opening || !openingAmount.trim()} type="submit">
+            {opening
+              ? "Abriendo caja…"
+              : error
+                ? "Reintentar apertura"
+                : "Abrir caja"}
+          </button>
+        </form>
       </div>
     );
   }
