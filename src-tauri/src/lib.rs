@@ -1,7 +1,10 @@
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tauri::{Manager, State};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use crate::persistence::connection::{open_pool, run_migrations, AppDb};
 
@@ -12,18 +15,134 @@ pub struct AppState {
     pub db: Arc<AppDb>,
 }
 
-fn app_data_dir(app_handle: &tauri::AppHandle) -> PathBuf {
+const STARTUP_ERROR_TITLE: &str = "UnaTienda could not start";
+const STARTUP_DIAGNOSTIC_FILE: &str = "startup-errors.log";
+
+#[derive(Debug, thiserror::Error)]
+enum StartupError {
+    #[error("cannot resolve the application data directory: {0}")]
+    AppDataDirectory(#[source] tauri::Error),
+    #[error("cannot create the application data directory at {path}: {source}")]
+    CreateAppDataDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("database initialization failed: {0}")]
+    Database(#[from] persistence::connection::DbError),
+}
+
+impl StartupError {
+    fn stage(&self) -> &'static str {
+        match self {
+            Self::AppDataDirectory(_) => "application data directory resolution",
+            Self::CreateAppDataDirectory { .. } => "application data directory creation",
+            Self::Database(_) => "database initialization and migration",
+        }
+    }
+
+    fn preferred_diagnostic_directory(&self) -> Option<&Path> {
+        match self {
+            Self::CreateAppDataDirectory { path, .. } => path.parent(),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct StartupFailureReport {
+    diagnostic_path: Option<PathBuf>,
+}
+
+impl StartupFailureReport {
+    fn record(
+        stage: &str,
+        detail: &str,
+        preferred_directory: Option<&Path>,
+        fallback_directory: &Path,
+    ) -> Self {
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let entry = format!("[{timestamp}] stage={stage}\nerror={detail}\n\n");
+
+        let diagnostic_path = preferred_directory
+            .and_then(|directory| write_startup_diagnostic(directory, &entry).ok())
+            .or_else(|| write_startup_diagnostic(fallback_directory, &entry).ok());
+
+        eprintln!("UnaTienda startup failure ({stage}): {detail}");
+        if let Some(path) = &diagnostic_path {
+            eprintln!("Startup diagnostics written to {}", path.display());
+        } else {
+            eprintln!("Startup diagnostics could not be written to disk");
+        }
+
+        Self { diagnostic_path }
+    }
+
+    fn user_message(&self) -> String {
+        let diagnostic_guidance = match &self.diagnostic_path {
+            Some(path) => format!(
+                "If the problem continues, share the diagnostic file with support:\n{}",
+                path.display()
+            ),
+            None => "Diagnostics could not be saved. Note this message before contacting support."
+                .to_string(),
+        };
+
+        format!(
+            "UnaTienda stopped database startup before the application became usable so it can fail safely.\n\nCheck available disk space and folder permissions, then restart the application.\n\n{diagnostic_guidance}"
+        )
+    }
+}
+
+fn write_startup_diagnostic(directory: &Path, entry: &str) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(directory)?;
+    let path = directory.join(STARTUP_DIAGNOSTIC_FILE);
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    file.write_all(entry.as_bytes())?;
+    file.sync_all()?;
+    Ok(path)
+}
+
+fn fallback_diagnostic_directory() -> PathBuf {
+    std::env::temp_dir().join("UnaTienda")
+}
+
+fn report_startup_failure(
+    app_handle: &tauri::AppHandle,
+    error: &StartupError,
+    preferred_directory: Option<&Path>,
+) {
+    let fallback_directory = fallback_diagnostic_directory();
+    let report = StartupFailureReport::record(
+        error.stage(),
+        &error.to_string(),
+        preferred_directory.or_else(|| error.preferred_diagnostic_directory()),
+        &fallback_directory,
+    );
+
+    app_handle
+        .dialog()
+        .message(report.user_message())
+        .kind(MessageDialogKind::Error)
+        .title(STARTUP_ERROR_TITLE)
+        .blocking_show();
+}
+
+fn app_data_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, StartupError> {
     app_handle
         .path()
         .app_data_dir()
-        .expect("app data directory must be available")
+        .map_err(StartupError::AppDataDirectory)
 }
 
-fn database_path(app_handle: &tauri::AppHandle) -> PathBuf {
-    let mut dir = app_data_dir(app_handle);
-    std::fs::create_dir_all(&dir).expect("create app data dir");
+fn database_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, StartupError> {
+    let mut dir = app_data_dir(app_handle)?;
+    std::fs::create_dir_all(&dir).map_err(|source| StartupError::CreateAppDataDirectory {
+        path: dir.clone(),
+        source,
+    })?;
     dir.push("unatienda.db");
-    dir
+    Ok(dir)
 }
 
 /// Initialize the application database and state.
@@ -53,15 +172,31 @@ async fn health(state: State<'_, AppState>) -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let db_path = database_path(&app.handle());
-            let state = tauri::async_runtime::block_on(initialize_app(&db_path))?;
+            let app_handle = app.handle();
+            let db_path = match database_path(app_handle) {
+                Ok(path) => path,
+                Err(error) => {
+                    report_startup_failure(app_handle, &error, None);
+                    return Err(error.into());
+                }
+            };
+
+            let state = match tauri::async_runtime::block_on(initialize_app(&db_path)) {
+                Ok(state) => state,
+                Err(error) => {
+                    let error = StartupError::Database(error);
+                    report_startup_failure(app_handle, &error, db_path.parent());
+                    return Err(error.into());
+                }
+            };
             app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![health])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|error| eprintln!("UnaTienda runtime terminated: {error}"));
 }
 
 #[cfg(test)]
@@ -78,5 +213,72 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let state = initialize_app(&db_path).await.unwrap();
         state.db.health_check().await.unwrap();
+    }
+
+    #[test]
+    fn configured_bundle_target_is_the_verified_macos_app_format() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["bundle"]["targets"], serde_json::json!(["app"]));
+    }
+
+    #[tokio::test]
+    async fn startup_database_failure_is_fail_closed_and_actionable() {
+        let dir = TempDir::new().unwrap();
+        let invalid_db_path = dir.path().join("database-is-a-directory");
+        std::fs::create_dir(&invalid_db_path).unwrap();
+
+        let error = match initialize_app(&invalid_db_path).await {
+            Ok(_) => panic!("a directory cannot be opened as the SQLite database"),
+            Err(error) => error,
+        };
+        let startup_error = StartupError::Database(error);
+        let diagnostics_dir = dir.path().join("diagnostics");
+        let fallback_dir = dir.path().join("fallback");
+        let report = StartupFailureReport::record(
+            startup_error.stage(),
+            &startup_error.to_string(),
+            Some(&diagnostics_dir),
+            &fallback_dir,
+        );
+
+        let diagnostic_path = report
+            .diagnostic_path
+            .as_ref()
+            .expect("startup failure must leave durable diagnostics");
+        let diagnostic = std::fs::read_to_string(diagnostic_path).unwrap();
+        assert!(diagnostic.contains("stage=database initialization and migration"));
+        assert!(diagnostic.contains("database initialization failed"));
+
+        let guidance = report.user_message();
+        assert!(guidance.contains("stopped database startup"));
+        assert!(guidance.contains("disk space and folder permissions"));
+        assert!(guidance.contains(&diagnostic_path.display().to_string()));
+    }
+
+    #[test]
+    fn startup_diagnostics_fall_back_when_app_data_is_unwritable() {
+        let dir = TempDir::new().unwrap();
+        let unusable_directory = dir.path().join("not-a-directory");
+        std::fs::write(&unusable_directory, b"blocks directory creation").unwrap();
+        let fallback_directory = dir.path().join("fallback");
+
+        let report = StartupFailureReport::record(
+            "application data directory creation",
+            "permission denied",
+            Some(&unusable_directory),
+            &fallback_directory,
+        );
+
+        let diagnostic_path = report
+            .diagnostic_path
+            .expect("fallback diagnostics must be written");
+        assert_eq!(
+            diagnostic_path,
+            fallback_directory.join(STARTUP_DIAGNOSTIC_FILE)
+        );
+        assert!(std::fs::read_to_string(diagnostic_path)
+            .unwrap()
+            .contains("permission denied"));
     }
 }
