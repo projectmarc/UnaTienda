@@ -1,3 +1,4 @@
+pub mod cash_session_repo;
 pub mod connection;
 pub mod idempotency;
 

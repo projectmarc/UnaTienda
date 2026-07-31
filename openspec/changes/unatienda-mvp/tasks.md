@@ -40,12 +40,12 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: Cash Session Domain
 
-- [ ] 2.1 Create `src-tauri/src/domain/cash_session.rs`: `CashSession` struct, `open` / `close` / `reconcile` methods enforcing single-open-session invariant, zero-drafts closure guard, expected cash formula (`opening + cash_payments - cash_reversals + income - expense - withdrawal`)
-- [ ] 2.2 Create `src-tauri/src/persistence/cash_session_repo.rs`: insert open session (with unique index guard), query current open session, snapshot and close atomically, query expected cash aggregations
-- [ ] 2.3 Create `src-tauri/src/application/cash_session_use_case.rs`: `OpenSession`, `CloseSession`, `ReconcileSession` use cases wrapping domain + persistence with idempotency key
-- [ ] 2.4 Create `src-tauri/src/commands/cash_session_commands.rs`: `open_session`, `close_session`, `get_reconciliation` Tauri commands returning canonical money strings and refreshed views
-- [ ] 2.5 Create `src/features/sessions/SessionView.tsx`: display open session with opening amount, expected cash, counted cash input, difference, close button; route-level workflow
-- [ ] 2.6 Write tests: open session, reject second session, close with difference, reject post-close mutation, expected cash calculation correctness
+- [x] 2.1 Create `src-tauri/src/domain/cash_session.rs`: `CashSession` struct, `open` / `close` / `reconcile` methods enforcing single-open-session invariant, zero-drafts closure guard, expected cash formula (`opening + cash_payments - cash_reversals + income - expense - withdrawal`)
+- [x] 2.2 Create `src-tauri/src/persistence/cash_session_repo.rs`: insert open session (with unique index guard), query current open session, snapshot and close atomically, query expected cash aggregations
+- [x] 2.3 Create `src-tauri/src/application/cash_session_use_case.rs`: `OpenSession`, `CloseSession`, `ReconcileSession` use cases wrapping domain + persistence with idempotency key
+- [x] 2.4 Create `src-tauri/src/commands/cash_session_commands.rs`: `open_session`, `close_session`, `get_reconciliation` Tauri commands returning canonical money strings and refreshed views
+- [x] 2.5 Create `src/features/sessions/SessionView.tsx`: display open session with opening amount, expected cash, counted cash input, difference, close button; route-level workflow
+- [x] 2.6 Write tests: open session, reject second session, close with difference, reject post-close mutation, expected cash calculation correctness
 
 ## Phase 3: Sales & Payments
 
