@@ -30,13 +30,13 @@ Chain strategy: stacked-to-main
 
 ## Phase 1: Project Scaffold & Foundation
 
-- [ ] 1.1 Initialize Tauri 2 project: `cargo tauri init` with React/Vite TypeScript template; verify `src-tauri/`, `src/`, `package.json`, `vite.config.ts` scaffold builds
-- [ ] 1.2 Create `src-tauri/src/domain/money.rs`: `Money(i64)` type with `from_cents`, `add`, `sub`, `checked_add`, `to_string` (decimal IPC), `FromStr` parsing with precision rejection
-- [ ] 1.3 Create `src-tauri/src/domain/error.rs`: App error enum (`VALIDATION`, `NO_OPEN_SESSION`, `SESSION_CLOSED`, `DRAFTS_BLOCK_CLOSE`, `CONFLICT`, `IDEMPOTENCY_KEY_REUSE`, `IO`, `INCOMPATIBLE_BACKUP`) with `{code, message, field?, retryable}` JSON serialization
-- [ ] 1.4 Create `src-tauri/migrations/001_initial.sql`: schema with `cash_sessions`, `sales`, `payments`, `drafts`, `movements`, `returns`, `payment_reversals`, `idempotency_keys`, `schema_migrations`, `backup_runs` tables; foreign keys, UUIDs, UTC timestamps, partial unique index for one open session, reversal source XOR constraint
-- [ ] 1.5 Create `src-tauri/src/persistence/connection.rs`: SQLite pool with WAL, `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=FULL`, connection initialization, migration runner inside transactions with pre-migration backup snapshot
-- [ ] 1.6 Create `src-tauri/src/persistence/idempotency.rs`: `IdempotencyKey` lookup/insert/commit in same transaction, `get_mutation_status` returning committed response or not_found
-- [ ] 1.7 Write unit tests for `Money` arithmetic, overflow rejection, IPC string conversion, and `FromStr` parsing
+- [x] 1.1 Initialize Tauri 2 project: `cargo tauri init` with React/Vite TypeScript template; verify `src-tauri/`, `src/`, `package.json`, `vite.config.ts` scaffold builds
+- [x] 1.2 Create `src-tauri/src/domain/money.rs`: `Money(i64)` type with `from_cents`, `add`, `sub`, `checked_add`, `to_string` (decimal IPC), `FromStr` parsing with precision rejection
+- [x] 1.3 Create `src-tauri/src/domain/error.rs`: App error enum (`VALIDATION`, `NO_OPEN_SESSION`, `SESSION_CLOSED`, `DRAFTS_BLOCK_CLOSE`, `CONFLICT`, `IDEMPOTENCY_KEY_REUSE`, `IO`, `INCOMPATIBLE_BACKUP`) with `{code, message, field?, retryable}` JSON serialization
+- [x] 1.4 Create `src-tauri/migrations/001_initial.sql`: schema with `cash_sessions`, `sales`, `payments`, `drafts`, `movements`, `returns`, `payment_reversals`, `idempotency_keys`, `schema_migrations`, `backup_runs` tables; foreign keys, UUIDs, UTC timestamps, partial unique index for one open session, reversal source XOR constraint
+- [x] 1.5 Create `src-tauri/src/persistence/connection.rs`: SQLite pool with WAL, `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=FULL`, connection initialization, migration runner inside transactions with pre-migration backup snapshot
+- [x] 1.6 Create `src-tauri/src/persistence/idempotency.rs`: `IdempotencyKey` lookup/insert/commit in same transaction, `get_mutation_status` returning committed response or not_found
+- [x] 1.7 Write unit tests for `Money` arithmetic, overflow rejection, IPC string conversion, and `FromStr` parsing
 
 ## Phase 2: Cash Session Domain
 
@@ -94,3 +94,9 @@ Chain strategy: stacked-to-main
 - [ ] 7.4 Create `src/app/App.tsx` and `src/app/router.tsx`: feature-folder routing, state reload after mutations, layout with session context provider
 - [ ] 7.5 Write end-to-end test: full session lifecycle from open through sales, returns, movements, to close, verifying expected cash and immutability
 - [ ] 7.6 Update `README.md` with build instructions, SmartScreen warning documentation, and architecture overview
+
+## Foundation pre-PR fix round 1
+
+- [x] FPR-1 Fix R4-001 by limiting the configured macOS bundle path to the verified app format and verify the normal configured build command
+- [x] FPR-2 Fix R4-002 with fail-closed startup errors, blocking user recovery guidance, and durable diagnostics with fallback storage
+- [x] FPR-3 Fix R3-003 for fresh and existing databases by rejecting ownership reassignment into closed sessions and adding discriminating regression tests

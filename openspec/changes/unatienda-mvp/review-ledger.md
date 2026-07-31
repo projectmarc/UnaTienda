@@ -1,0 +1,208 @@
+# Review Ledger — unatienda-mvp
+
+## Judgment Day: Technical Design — Final Scoped Re-review
+
+**State:** JUDGMENT: ESCALATED — terminal review state preserved because the 2/2 fix budget was exhausted
+
+Both judges verified JD-A-002 through JD-A-005. JD-A-001 is `wont-fix` in the review-process sense: the disputed reservation model was rejected by explicit user architecture decision and replaced with a single-transaction atomic idempotency model. This manual resolution does not reopen review or permit re-judgment. Warnings remain informational and non-blocking.
+
+| id | lens | location | severity | status | evidence | assessment |
+|---|---|---|---|---|---|---|
+| JD-A-001 | judgment-day | `openspec/changes/unatienda-mvp/design.md:31-44` | CRITICAL | wont-fix | The previously disputed durable reservation lifecycle was rejected by explicit user architecture decision. The design now commits the idempotency key, response, and financial mutation atomically; rollback leaves no key, and a lost IPC response is replayed from the committed key. | manually resolved after terminal review; no re-judgment |
+| JD-A-002 | judgment-day | `openspec/changes/unatienda-mvp/design.md:67-96` | CRITICAL | verified | Both judges verified the durable phase journal, fsync ordering, deterministic phase-based startup recovery, and independence from target-file existence. | fixed and verified |
+| JD-A-003 | judgment-day | `openspec/changes/unatienda-mvp/design.md:71` | CRITICAL | verified | Startup plus 15-minute current-day checks guarantee backup attempts while continuously open. | fixed and verified |
+| JD-A-004 | judgment-day | `openspec/changes/unatienda-mvp/design.md:53-63` | CRITICAL | verified | The return command defines amount and per-payment allocation with cumulative and remaining-balance guards. | fixed and verified |
+| JD-A-005 | judgment-day | `openspec/changes/unatienda-mvp/design.md:19-29` | CRITICAL | verified | Historical sale ownership and current-session return ownership are explicit without mutating closed-session rows. | fixed and verified |
+| JD-A-006 | judgment-day | `openspec/changes/unatienda-mvp/design.md:14,69` | WARNING | info | SQLite `foreign_keys` and `busy_timeout` initialization is not explicitly stated per pooled connection. | real |
+| JD-A-007 | judgment-day | `openspec/changes/unatienda-mvp/design.md:12,23` | WARNING | info | Aggregate `i64`/SQLite sums have no explicit checked-overflow policy. | theoretical |
+| JD-B-001 | judgment-day | `openspec/changes/unatienda-mvp/design.md:71` | WARNING | info | Startup/resume-only scheduling can miss the required daily backup while the app stays continuously open. | real |
+
+## Convergence
+
+- Confirmed BLOCKER/CRITICAL: 0
+- Open BLOCKER/CRITICAL: 0
+- Verified BLOCKER/CRITICAL: 4
+- Fixed pending re-review BLOCKER/CRITICAL: 0
+- Contradictions: 0
+- Informational warnings: 3
+- Fix rounds used: 2/2
+
+No further fix rounds remain, and the terminal state stays `JUDGMENT: ESCALATED`. Manual resolution selected the atomic idempotency model for JD-A-001; task planning may use that model without further Judgment Day review.
+
+---
+
+## Judgment Day: Foundation Slice 1 — Round 2
+
+**State:** JUDGMENT: ESCALATED — fix budget exhausted; focused triage confirmed four remaining defects
+
+| id | lens | location | severity | status | evidence | assessment |
+|---|---|---|---|---|---|---|
+| JD-A-001 | judgment-day | `src-tauri/migrations/001_initial.sql:92-107` | BLOCKER | verified | All `payment_reversals` columns (incl. `created_at` with DEFAULT) precede the table-level `FOREIGN KEY` and `CHECK` constraints, matching SQLite's column-then-table-constraint grammar. The XOR `CHECK` (`(return_id IS NOT NULL AND annulment_sale_id IS NULL) OR (return_id IS NULL AND annulment_sale_id IS NOT NULL)`) is intact. `migration_creates_schema_tables` (asserts the table loads) and `payment_reversals_xor_source_constraint` (asserts valid return-only insert succeeds; both-sources and neither-source inserts fail) both pass. cargo test 23/23. | verified in final scoped re-review |
+| JD-A-002 | judgment-day | `src-tauri/migrations/001_initial.sql:146-234` | BLOCKER | verified | Each invalid compound `BEFORE UPDATE OR DELETE` is split into separate `BEFORE UPDATE ON <t>` and `BEFORE DELETE ON <t>` triggers for payments (146-168), movements (170-188), returns (190-208), and payment_reversals (210-234). Every trigger keeps the `WHEN EXISTS (... status='closed' ...)` guard and `RAISE(ABORT, 'closed session records are immutable')`. `closed_session_immutability_triggers` asserts UPDATE and DELETE are blocked on payments, movements, returns, and payment_reversals. cargo test 23/23. | verified in final scoped re-review |
+| JD-A-003 / JD-B-002 | judgment-day | `src-tauri/src/persistence/idempotency.rs:20-35,78-114` | BLOCKER | verified | Mapped `PoolError`/`InteractError` to `AppError::Database` explicitly; added `Send + 'static` bounds to `R` and `F` so `deadpool_sync::interact` accepts the closure. `cargo build` and `cargo fmt --check` pass. | confirmed and verified by both judges |
+| JD-A-004 / JD-B-004 | judgment-day | `src-tauri/src/persistence/connection.rs:53-60` | BLOCKER | verified | Added `CreatePoolError` variant to `DbError` and switched `open_pool` to `Config::builder(...).post_create(...).build()` so pool construction errors are converted. `cargo build` and `cargo fmt --check` pass. | confirmed and verified by both judges |
+| JD-A-005 / JD-B-001 | judgment-day | `src-tauri/Cargo.toml:23`; `src-tauri/src/persistence/connection.rs:67-79` | BLOCKER | verified | Enabled `backup` feature on `rusqlite`; replaced hand-rolled `backup.step(-1)` with `Connection::backup(DatabaseName::Main, &snapshot_path, None)` and removed the wrong `Connection::open`/`.to_string_lossy()` path handling. `cargo build` and `npx tauri build --debug --bundles app` pass. | confirmed and verified by both judges |
+| JD-A-006 | judgment-day | `src-tauri/src/lib.rs:43-50` | BLOCKER | open | Synchronous setup calls `Handle::current()` and `block_on`; focused reliability triage confirmed this can panic without an entered runtime or when blocking inside one. | confirmed by focused triage |
+| JD-A-007 / JD-B-007 | judgment-day | `src-tauri/tauri.conf.json:27-36` | BLOCKER | verified | Generated valid RGBA PNG/ICO/ICNS assets under `src-tauri/icons/` matching the configured paths. `npx tauri build --debug --bundles app` produced `UnaTienda.app` with `icon.icns` in Resources. | confirmed and verified by both judges |
+| JD-A-008 | judgment-day | `src-tauri/src/domain/money.rs:12-14` | CRITICAL | open | `#[serde(transparent)]` over `i64` serializes `Money::from_cents(12345)` as `12345`, not required IPC string `"123.45"`; no Serde contract test exists. | confirmed by focused triage |
+| JD-A-009 / JD-B-005 | judgment-day | `src-tauri/src/persistence/connection.rs:53-60` | CRITICAL | verified | Replaced first-connection-only initialization with a `post_create` hook on the pool builder; the hook synchronously locks the `Object` and runs `initialize_connection` so every newly created connection gets the required pragmas. `pool_initializes_pragmas` test passes. | confirmed and verified by both judges |
+| JD-A-010 | judgment-day | `src-tauri/migrations/001_initial.sql:9-19,136-144` | CRITICAL | open | Executable SQLite triage changed a closed session amount, updated a closed-sale annulment reason, and deleted the sale; required finality is not enforced. | confirmed by focused triage |
+| JD-B-003 | judgment-day | `src-tauri/src/persistence/idempotency.rs:63-74` | BLOCKER | refuted | Current bounds explicitly require `R` and `F` to be `Send + 'static`, satisfying deadpool interact requirements. | refuted by focused triage |
+| JD-A-011 | judgment-day | `src-tauri/src/persistence/connection.rs:64-100` | WARNING | info | Repeated pre-migration snapshots may grow without cleanup. | real |
+| JD-B-006 | judgment-day | `src-tauri/src/persistence/connection.rs:67-105` | CRITICAL | open | Every populated startup creates a timestamped snapshot; no migration-version gate, retention limit, or cleanup path exists, causing unbounded disk growth. | confirmed by focused triage |
+| JD-B-008 | judgment-day | `src-tauri/src/persistence/connection.rs:45` | WARNING | info | `strict_tables` is not a stock SQLite pragma and does not make tables STRICT. | real |
+
+### Foundation convergence
+
+- Confirmed defect groups eligible for fixing: 5
+- Verified converged groups: 5
+- Verified Round 2 migration fixes: 2 (JD-A-001, JD-A-002)
+- Open BLOCKER/CRITICAL after focused triage: 4
+- Refuted findings: 1
+- Informational warnings: 2 (preserved unchanged)
+- Fix rounds used: 2/2 (budget exhausted)
+
+Both judges verified the five converged Round 1 groups and the two Round 2 migration fixes. A later read-only focused reliability triage confirmed JD-A-006, JD-A-008, JD-A-010, and JD-B-006, and refuted JD-B-003. Because the Judgment Day fix budget is exhausted, the four confirmed defects remain open and the Foundation slice cannot be approved within this review loop.
+
+---
+
+## Judgment Day: Foundation Remediation Work Unit — Round 1
+
+**State:** JUDGMENT: APPROVED — REM-A-001 verified by both judges; REM-A-002 remains informational
+
+| id | lens | location | severity | status | evidence | assessment |
+|---|---|---|---|---|---|---|
+| REM-A-001 | judgment-day | `src-tauri/migrations/002_upgrade_closed_session_immutability.sql:1-173`; `src-tauri/src/persistence/connection.rs:174-223,621-742` | CRITICAL | verified | Migration v2 replaces legacy triggers; the ordered runner records pending migrations atomically. Both judges verified the v1 upgrade test, fresh installs, snapshot gating, and 32/32 passing tests. | fixed and verified |
+| REM-A-002 | judgment-day | `src-tauri/src/lib.rs:72-81` | SUGGESTION | info | The test exercises `initialize_app` directly rather than the complete Tauri setup closure. | theoretical |
+
+### Remediation convergence
+
+- Confirmed BLOCKER/CRITICAL: 0
+- Confirmed CRITICAL: 0
+- Verified CRITICAL: 1
+- Fixed pending scoped re-review CRITICAL: 0
+- Informational suggestions: 1
+- Fix rounds used: 1/2
+
+The legacy version-1 upgrade path is fixed and verified. Migration v2 safely replaces legacy triggers, all 32 Rust tests pass, and the remediation review is terminally approved.
+
+---
+
+## Foundation Remediation Work Unit (separate from Judgment Day fix rounds)
+
+**State:** REMEDIATION VERIFIED — four defects fixed; fresh review approved after migration-v2 follow-up
+
+This remediation is a newly user-authorized implementation unit. It is explicitly **not** Judgment Day fix round 3; the prior loop is terminally escalated and preserved above. The four defects below were fixed with behavior-first focused tests and full build verification.
+
+| id | lens | location | severity | status | evidence | assessment |
+|---|---|---|---|---|---|---|
+| JD-A-006 | remediation | `src-tauri/src/lib.rs:39-57` | BLOCKER | verified | Replaced `tokio::runtime::Handle::current().block_on` in Tauri setup with `tauri::async_runtime::block_on(initialize_app(&db_path))`. Extracted `initialize_app` as a plain async function that can be driven by any compatible executor. `tests::initialize_app_does_not_depend_on_tokio_handle_block_on` passes. | fixed and verified by fresh review |
+| JD-A-008 | remediation | `src-tauri/src/domain/money.rs:66-95` | CRITICAL | verified | Removed `#[serde(transparent)]` and implemented custom `Serialize`/`Deserialize` using the existing `Display`/`FromStr` decimal-string contract. `Money::from_cents(12345)` now serializes as `"123.45"`; numeric cents and excess precision are rejected on deserialization. Four focused Serde contract tests pass. | fixed and verified by fresh review |
+| JD-A-010 | remediation | `src-tauri/migrations/001_initial.sql:132-278` | CRITICAL | fixed | Enforced complete closed-session immutability: added `UPDATE`/`DELETE` guards on `cash_sessions` when `status='closed`; removed the column list on the `sales` update trigger so all columns (including `annulment_reason`) are protected; added `DELETE` guard on `sales`; added `UPDATE`/`DELETE` guards on `drafts`. Focused SQLite trigger test covers all tables and omitted fields. | fixed pending fresh review |
+| JD-B-006 | remediation | `src-tauri/src/persistence/connection.rs:76-181` | CRITICAL | fixed | Pre-migration snapshots are now created only when migration version 1 is pending and the database already contains tables. Added `SNAPSHOT_RETENTION_LIMIT = 5` and `enforce_snapshot_retention` to keep only the newest five snapshots by filename timestamp. Three focused deterministic tests cover fresh-DB, pending-only, and retention behavior. | fixed pending fresh review |
+
+### Remediation convergence
+
+- Verified in this unit: 4 (JD-A-006, JD-A-008, JD-A-010, JD-B-006)
+- Remaining open BLOCKER/CRITICAL from prior triage: 0
+- Informational warnings preserved unchanged: JD-A-011, JD-B-008
+- Prior terminal `JUDGMENT: ESCALATED` state preserved for history.
+
+---
+
+## Pre-commit Review: Foundation Work Unit — Round 1
+
+**State:** ESCALATED — R3-002 verified; R3-001 remains open after the final scoped re-review
+
+Standard pre-commit review of the staged Rust/Tauri Foundation work unit identified two focused defects. Both were fixed with behavior-first tests and full build verification. The source fixes remain staged with the existing Rust work unit; this ledger entry and `apply-progress.md` are unstaged pending the documentation commit.
+
+| id | lens | location | severity | status | evidence | assessment |
+|---|---|---|---|---|---|---|
+| R3-001 | pre-commit | `src-tauri/migrations/001_initial.sql:284-351`; `src-tauri/migrations/003_upgrade_closed_session_insert_guards.sql:1-84`; `src-tauri/src/persistence/connection.rs:1227-1503` | CRITICAL | verified | Added focused fresh-schema and genuine pre-v3 upgrade-path tests where the payment belongs to sale A/session A and `annulment_sale_id` points to a distinct sale B/session B. Both cases deliberately invert session A's state; the assertions prove annulment-based reversals follow sale B's session, not the payment's sale A. The tests pass under the current annulment-sale predicate and fail under the former payment-sale ownership predicate (verified by temporary SQL swap). Return-source and XOR coverage remain intact. cargo fmt --check, cargo test (41/41), and cargo build pass. | fixed and verified by test-only remediation |
+| R3-002 | pre-commit | `src-tauri/src/domain/money.rs:65-75,101-159,275-318` | CRITICAL | verified | `Display` uses i128 magnitude; FromStr handles the exact i64 minimum and rejects out-of-domain values; Serde round-trips the full i64 domain. | fixed and verified |
+
+### Pre-commit convergence
+
+- Verified BLOCKER/CRITICAL: 2 (R3-001, R3-002)
+- Open BLOCKER/CRITICAL: 0
+- Pre-existing informational warnings preserved unchanged: JD-A-011, JD-B-008
+- Fix rounds used: 2/2
+- Test-only remediation: R3-001 annulment-sale ownership discrimination verified outside the exhausted fix rounds.
+
+---
+
+## Foundation pre-PR full-4R review
+
+**State:** THREE FINDINGS VERIFIED; R3-004 REMAINS OPEN AFTER FIX ROUND 2 — convergence budget exhausted
+
+### R1 — Security / risk
+
+The R1 ledger was empty: the exhaustive `main...feat/foundation` security-risk sweep reported no defensible user-impacting finding.
+
+### R2 — Readability / maintainability (informational only)
+
+These warnings are recorded as `info` and were intentionally not fixed in this round.
+
+| id | location | initial severity | initial status | evidence | current status |
+|---|---|---|---|---|---|
+| R2-001 | `openspec/changes/unatienda-mvp/apply-progress.md:65,295` | WARNING | informational | Review-budget context is stale/contradictory: historical section totals no longer describe the complete branch, and a 440-line unit is described as within a 400-line ideal. | info |
+| R2-002 | `src-tauri/src/domain/money.rs:54-63` | WARNING | informational | `Money::add`/`sub` documentation describes wrapping behavior while the implementation saturates. | info |
+| R2-003 | `src-tauri/src/persistence/connection.rs:61-79` | WARNING | informational | The `strict_tables` comment claims type enforcement although the pragma is best-effort/unknown and prior progress notes say it does not make tables STRICT. | info |
+
+### R3 / R4 — Surviving findings and refutation votes
+
+| id | lens | location | initial severity | initial status / evidence | refutation vote | implementation evidence | current status |
+|---|---|---|---|---|---|---|---|
+| R3-003 | reliability | `src-tauri/migrations/002_upgrade_closed_session_immutability.sql:42-138` (mirrored in `001_initial.sql`) | CRITICAL | stood — UPDATE guards inspected only OLD ownership; executable SQLite evidence showed an open-session sale could be reassigned into a closed session. Migration 3 added INSERT guards only, and existing tests did not mutate owner columns. | stood 3/3 | Fresh and v2 trigger definitions now reject NEW closed ownership; migration v4 replaces vulnerable triggers on already-applied v3 databases. `closed_session_reassignment_is_rejected_on_fresh_schema` and `migration_v4_closes_reassignment_gap_for_existing_v3_database` prove sales, payments, movements, drafts, returns, and both reversal source paths reject open→closed reassignment while legitimate open-session updates succeed. | verified |
+| R4-001 | release resilience | `src-tauri/tauri.conf.json:27-36` | BLOCKER | stood — configured `bundle.targets: "all"` had no successful standard build; only an ad-hoc app-only override passed and the configured DMG path failed. Tauri v2 documentation confirms `build` automatically bundles configured formats. | stood 2/3 | Default configured target is now `app`. `configured_bundle_target_is_the_verified_macos_app_format` passes, and the normal unoverridden `npx tauri build --debug` produces `target/debug/bundle/macos/UnaTienda.app` without attempting DMG. | verified |
+| R4-002 | release resilience | `src-tauri/src/lib.rs:61-72` | CRITICAL | stood — app-data path creation used `.expect`, database/migration errors propagated to final `.expect`, and the bundled GUI had no recovery guidance or durable diagnostic path. | stood 3/3 | Startup path resolution, directory creation, database, and migration failures now share fail-closed handling: append+fsync diagnostics in app data with temp fallback, emit stderr, show a blocking native error dialog with recovery steps and diagnostic path, then abort setup. Focused failure/fallback tests pass. | verified |
+| R3-004 | reliability | `src-tauri/src/persistence/connection.rs:1506-1813` | BLOCKER | stood — migration 004 replaces the payment-reversal DELETE trigger with source-session ownership, but the v3→v4 upgrade fixture originally reconstructed only vulnerable UPDATE triggers; the helper had no discriminating DELETE assertions. | stands 3/3 | Fix round 2 reconstructs the vulnerable DELETE trigger and discriminates return-owned closed/open paths. A separate recovery then removed the unsafe cancelled residue and added an upgrade-only annulment DELETE discriminator: payment session A is closed, annulment-source session B is open, and DELETE succeeds only under the corrected source-owned trigger. Focused and full Rust tests pass; fresh scoped reliability review found no new defect. | verified |
+
+### Convergence
+
+- R1 findings: 0 (empty ledger)
+- R2 informational items: 3 (`R2-001`–`R2-003`, unchanged)
+- Surviving BLOCKER/CRITICAL findings: 4
+- Verified: 4 (`R3-003`, `R4-001`, `R4-002`, `R3-004`)
+- Original convergence budget was exhausted after fix round 2; R3-004 was resolved through a separately approved remediation unit and fresh scoped review.
+
+---
+
+## Separate-remediation recovery — R3-004 (2026-07-31)
+
+**State:** R3-004 verified by fresh scoped reliability review.
+**Scope:** Surgical recovery of the cancelled separate-remediation residue only. Round-1 and round-2 Foundation fixes remain untouched; no production or migration files changed in this recovery unit.
+
+### Recovery result
+
+- Removed the cancelled Phase 3 residue from the shared reassignment helper, including the unsafe complementary Case B setup that inserted an annulment reversal after closing its source session.
+- Preserved the valid return-owned DELETE cases and the existing closed-session reassignment coverage.
+- Added `assert_annulment_owned_delete_guard`, called only by the genuine v3→v4 upgrade test. It uses the required one-open-session sequence:
+  1. Open session A (`session-annulment-payment`), create the original sale/payment, then close A.
+  2. Open session B (`session-annulment-source`), create the annulment sale and reversal while B is open, satisfying the INSERT guard.
+  3. DELETE the reversal while B is open; the source-owned trigger allows it.
+- The fixture still recreates the vulnerable v3 payment-sale-owned DELETE trigger before migration 004 runs. Therefore a missing migration 004 or a migration retaining payment-sale ownership sees closed A and rejects the expected DELETE, making the focused upgrade test fail.
+- The complementary closed-annulment/open-payment DELETE direction was not implemented: the one-open-session constraint and source-owned INSERT guard make that setup invalid without bypassing a guard. No bypass was added.
+
+### Command evidence
+
+| Command (working directory) | Result |
+|---|---|
+| `cargo test reassignment -- --nocapture` (initial recovery baseline) | **FAIL** — 2 tests run, 0 passed, 2 failed; both panicked on `cannot insert records into a closed session` during the cancelled Case B setup. |
+| `cargo test reassignment -- --nocapture` (after recovery) | **PASS** — 2 focused tests passed, 0 failed; 44 tests filtered out in the library target. |
+| `cargo fmt --check` | **PASS** — exit 0, no output. |
+| `cargo test` | **PASS** — 46/46 library tests passed; main target and doc-tests also passed with 0 failures. |
+| `git diff --check -- src-tauri/src/persistence/connection.rs` | **PASS** — no whitespace errors. |
+
+Frontend checks were not run because this recovery changes only Rust test fixture code and no frontend/shared artifacts.
+
+### Discriminating proof
+
+- Correct migration 004: annulment source B is open, so the annulment-owned DELETE succeeds.
+- Historical payment-owned DELETE trigger, or omitted migration 004 in this v3-reconstructed fixture: payment source A is closed, so the same DELETE is rejected and the upgrade test fails.
+- Return-owned closed/open DELETE assertions remain in the shared helper.
+
+### Current review status
+
+- R3-004: **verified** — the reviewer confirmed the cancelled residue is absent and the v3→v4 annulment DELETE case distinguishes closed payment ownership from open annulment-source ownership.
+- New findings: none.
