@@ -1,25 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SessionView from "./SessionView";
 
 vi.mock("../../shared/tauri/commands", () => ({
   openSession: vi.fn(),
   getReconciliation: vi.fn(),
+  getSessionHistory: vi.fn(),
   closeSession: vi.fn(),
   recordSale: vi.fn(),
   recordCashOut: vi.fn(),
+  annulSale: vi.fn(),
 }));
 
 import {
   closeSession,
   getReconciliation,
+  getSessionHistory,
   openSession,
+  annulSale,
+  recordSale,
 } from "../../shared/tauri/commands";
 
 const mockOpenSession = vi.mocked(openSession);
 const mockGetReconciliation = vi.mocked(getReconciliation);
 const mockCloseSession = vi.mocked(closeSession);
+const mockGetSessionHistory = vi.mocked(getSessionHistory);
+const mockAnnulSale = vi.mocked(annulSale);
+const mockRecordSale = vi.mocked(recordSale);
 
 const openReconciliation = {
   sessionId: "test-session",
@@ -30,6 +38,18 @@ const openReconciliation = {
 describe("SessionView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetSessionHistory.mockResolvedValue({
+      operations: [],
+      paymentTotals: {
+        cash: "0.00",
+        transfer: "0.00",
+        debit: "0.00",
+        credit: "0.00",
+        qr: "0.00",
+      },
+      transferTotals: [],
+      expectedCash: "100.00",
+    });
   });
 
   it("muestra el estado de carga inicial", () => {
@@ -145,10 +165,7 @@ describe("SessionView", () => {
       await screen.findByRole("button", { name: "Proceder al cierre" }),
     );
 
-    await user.type(
-      await screen.findByLabelText("Efectivo contado"),
-      "105.00",
-    );
+    await user.type(await screen.findByLabelText("Efectivo contado"), "105.00");
     await screen.findByText("+$ 5,00");
     await user.click(screen.getByRole("button", { name: "Revisar cierre" }));
 
@@ -228,5 +245,78 @@ describe("SessionView", () => {
     expect(
       screen.getByRole("heading", { name: "Registrar movimientos" }),
     ).toBeInTheDocument();
+  });
+
+  it("refreshes history and totals after recording a sale", async () => {
+    const user = userEvent.setup();
+    mockGetReconciliation.mockResolvedValue(openReconciliation);
+    mockRecordSale.mockResolvedValue({
+      saleId: "sale-1",
+      totalAmount: "20.00",
+    });
+
+    render(<SessionView />);
+
+    await user.type(await screen.findByLabelText("Monto total"), "20.00");
+    await user.click(screen.getByRole("button", { name: "Ropa" }));
+    await user.click(screen.getByRole("button", { name: "Efectivo" }));
+    await user.click(screen.getByRole("button", { name: "Registrar venta" }));
+
+    await waitFor(() => {
+      expect(mockRecordSale).toHaveBeenCalled();
+      expect(mockGetSessionHistory).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("requires confirmation and refreshes after annulling a sale", async () => {
+    const user = userEvent.setup();
+    mockGetReconciliation.mockResolvedValue(openReconciliation);
+    mockGetSessionHistory.mockResolvedValue({
+      operations: [
+        {
+          id: "sale-1",
+          occurredAt: "2026-08-03T00:00:00Z",
+          operationType: "sale",
+          amount: "20.00",
+          category: "ropa",
+          payments: [{ method: "cash", amount: "20.00" }],
+          status: "confirmed",
+        },
+      ],
+      paymentTotals: {
+        cash: "20.00",
+        transfer: "0.00",
+        debit: "0.00",
+        credit: "0.00",
+        qr: "0.00",
+      },
+      transferTotals: [],
+      expectedCash: "120.00",
+    });
+    mockAnnulSale.mockResolvedValue({ saleId: "sale-1", status: "annulled" });
+
+    render(<SessionView />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Anular venta" }),
+    );
+    expect(mockAnnulSale).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+
+    await user.type(
+      within(screen.getByRole("alertdialog")).getByLabelText(/Motivo/),
+      "error de carga",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Confirmar anulación" }),
+    );
+
+    await waitFor(() => {
+      expect(mockAnnulSale).toHaveBeenCalledWith(
+        { saleId: "sale-1", reason: "error de carga" },
+        expect.any(String),
+      );
+      expect(mockGetSessionHistory).toHaveBeenCalledTimes(2);
+    });
   });
 });
