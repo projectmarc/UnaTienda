@@ -7,6 +7,8 @@ import {
   type ClosedSessionResponse,
   type ReconciliationView,
 } from "../../shared/tauri/commands";
+import CashOutForm from "./CashOutForm";
+import SaleForm from "./SaleForm";
 
 function generateIdempotencyKey(): string {
   return crypto.randomUUID();
@@ -28,6 +30,8 @@ function errorMessage(action: "abrir" | "cerrar"): string {
 const inputClassName =
   "h-12 w-full rounded-sm border border-input bg-muted px-3 font-mono text-lg tabular-nums outline-none transition-colors duration-150 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
 
+type SessionPhase = "operation" | "reconcile";
+
 export default function SessionView() {
   const [session, setSession] = useState<ReconciliationView | null>(null);
   const [openingAmount, setOpeningAmount] = useState("");
@@ -39,6 +43,7 @@ export default function SessionView() {
   const [closing, setClosing] = useState(false);
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<SessionPhase>("operation");
   const openKeyRef = useRef<string | null>(null);
   const closeKeyRef = useRef<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -99,6 +104,7 @@ export default function SessionView() {
       setError(null);
       await openSession(openingAmount.trim(), openKeyRef.current);
       await loadSession();
+      setPhase("operation");
       openKeyRef.current = null;
     } catch {
       setError(errorMessage("abrir"));
@@ -127,6 +133,10 @@ export default function SessionView() {
       setClosing(false);
     }
   };
+
+  const handleOperationRecorded = useCallback(() => {
+    loadSession();
+  }, [loadSession]);
 
   if (loading && !session) {
     return (
@@ -177,6 +187,7 @@ export default function SessionView() {
             setCountedCash("");
             setConfirmingClose(false);
             setError(null);
+            setPhase("operation");
           }}
           size="lg"
         >
@@ -245,6 +256,54 @@ export default function SessionView() {
     );
   }
 
+  // Operation phase: record sales and cash-outs
+  if (phase === "operation") {
+    return (
+      <section aria-labelledby="operation-title" className="py-8">
+        <p className="text-xs font-semibold tracking-[0.16em] text-primary uppercase">
+          Paso 2 de 3 · Operación
+        </p>
+        <h2
+          id="operation-title"
+          className="mt-2 text-3xl font-semibold tracking-tight"
+        >
+          Registrar movimientos
+        </h2>
+        <p className="mt-2 text-foreground-secondary">
+          Efectivo esperado:{" "}
+          <span className="font-mono font-semibold">
+            {formatMoney(session.expectedCash)}
+          </span>
+        </p>
+
+        <div className="mt-8 grid gap-8 sm:grid-cols-2">
+          <div className="rounded-sm border border-border p-5">
+            <SaleForm onRecorded={handleOperationRecorded} />
+          </div>
+          <div className="rounded-sm border border-border p-5">
+            <CashOutForm onRecorded={handleOperationRecorded} />
+          </div>
+        </div>
+
+        {error && (
+          <p className="mt-4 text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        )}
+
+        <Button
+          className="mt-8"
+          onClick={() => setPhase("reconcile")}
+          size="lg"
+          variant="outline"
+        >
+          Proceder al cierre
+        </Button>
+      </section>
+    );
+  }
+
+  // Reconcile phase: count cash and close
   const difference = session.difference;
   const differenceValue = difference ? formatMoney(difference) : null;
   const differenceLabel =
@@ -263,7 +322,7 @@ export default function SessionView() {
   return (
     <section aria-labelledby="reconcile-title" className="py-8">
       <p className="text-xs font-semibold tracking-[0.16em] text-primary uppercase">
-        Paso 2 de 3 · Conciliación
+        Paso 3 de 3 · Cierre
       </p>
       <h2
         id="reconcile-title"
@@ -376,6 +435,18 @@ export default function SessionView() {
             </Button>
           </>
         )}
+        <Button
+          disabled={closing}
+          onClick={() => {
+            setPhase("operation");
+            setCountedCash("");
+            setConfirmingClose(false);
+          }}
+          size="lg"
+          variant="ghost"
+        >
+          Volver a operación
+        </Button>
       </div>
     </section>
   );

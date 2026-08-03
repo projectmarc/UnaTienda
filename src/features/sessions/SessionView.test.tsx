@@ -7,6 +7,8 @@ vi.mock("../../shared/tauri/commands", () => ({
   openSession: vi.fn(),
   getReconciliation: vi.fn(),
   closeSession: vi.fn(),
+  recordSale: vi.fn(),
+  recordCashOut: vi.fn(),
 }));
 
 import {
@@ -40,7 +42,7 @@ describe("SessionView", () => {
     ).toBeInTheDocument();
   });
 
-  it("abre una sesión y muestra su conciliación", async () => {
+  it("abre una sesión y muestra la fase de operación", async () => {
     const user = userEvent.setup();
     mockGetReconciliation
       .mockRejectedValueOnce("NO_OPEN_SESSION")
@@ -64,7 +66,7 @@ describe("SessionView", () => {
       expect(mockGetReconciliation).toHaveBeenCalledTimes(2);
     });
     expect(
-      await screen.findByRole("heading", { name: "Conciliar caja" }),
+      await screen.findByRole("heading", { name: "Registrar movimientos" }),
     ).toBeInTheDocument();
   });
 
@@ -90,7 +92,7 @@ describe("SessionView", () => {
     );
   });
 
-  it("solicita al backend la diferencia exacta", async () => {
+  it("navega a conciliación y solicita la diferencia exacta", async () => {
     const user = userEvent.setup();
     mockGetReconciliation
       .mockResolvedValueOnce(openReconciliation)
@@ -101,6 +103,16 @@ describe("SessionView", () => {
       });
 
     render(<SessionView />);
+
+    // First, navigate to reconciliation phase
+    await user.click(
+      await screen.findByRole("button", { name: "Proceder al cierre" }),
+    );
+
+    // Now we should be in the reconcile phase
+    expect(
+      screen.getByRole("heading", { name: "Conciliar caja" }),
+    ).toBeInTheDocument();
 
     await user.type(await screen.findByLabelText("Efectivo contado"), "90.00");
 
@@ -128,7 +140,15 @@ describe("SessionView", () => {
 
     render(<SessionView />);
 
-    await user.type(await screen.findByLabelText("Efectivo contado"), "105.00");
+    // Navigate to reconciliation
+    await user.click(
+      await screen.findByRole("button", { name: "Proceder al cierre" }),
+    );
+
+    await user.type(
+      await screen.findByLabelText("Efectivo contado"),
+      "105.00",
+    );
     await screen.findByText("+$ 5,00");
     await user.click(screen.getByRole("button", { name: "Revisar cierre" }));
 
@@ -165,6 +185,11 @@ describe("SessionView", () => {
 
     render(<SessionView />);
 
+    // Navigate to reconciliation
+    await user.click(
+      await screen.findByRole("button", { name: "Proceder al cierre" }),
+    );
+
     const input = await screen.findByLabelText("Efectivo contado");
     await user.type(input, "100.00");
     await screen.findByText("Sin diferencia");
@@ -177,6 +202,31 @@ describe("SessionView", () => {
     expect(input).toHaveValue("100.00");
     expect(
       screen.getByRole("button", { name: "Reintentar cierre" }),
+    ).toBeInTheDocument();
+  });
+
+  it("permite volver a la fase de operación desde conciliación", async () => {
+    const user = userEvent.setup();
+    mockGetReconciliation.mockResolvedValueOnce(openReconciliation);
+
+    render(<SessionView />);
+
+    // Navigate to reconciliation
+    await user.click(
+      await screen.findByRole("button", { name: "Proceder al cierre" }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Conciliar caja" }),
+    ).toBeInTheDocument();
+
+    // Go back to operation
+    await user.click(
+      screen.getByRole("button", { name: "Volver a operación" }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Registrar movimientos" }),
     ).toBeInTheDocument();
   });
 });

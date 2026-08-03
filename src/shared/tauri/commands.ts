@@ -23,6 +23,34 @@ export interface ReconciliationView {
   difference?: string;
 }
 
+// --- Sale Types ---
+
+export type SaleCategory = "ropa" | "libreria" | "mixto";
+export type PaymentMethod = "cash" | "transfer" | "debit" | "credit" | "qr";
+
+export interface PaymentPartRequest {
+  method: PaymentMethod;
+  amount: string;
+  recipientAccount?: string;
+}
+
+export interface RecordSaleRequest {
+  totalAmount: string;
+  category: SaleCategory;
+  detail?: string;
+  payments: PaymentPartRequest[];
+}
+
+export interface SaleRecordedResponse {
+  saleId: string;
+  totalAmount: string;
+}
+
+export interface CashOutRecordedResponse {
+  movementId: string;
+  amount: string;
+}
+
 // --- Cash Session Commands ---
 
 export async function openSession(
@@ -50,5 +78,29 @@ export async function getReconciliation(
 ): Promise<ReconciliationView> {
   return invoke<ReconciliationView>("get_reconciliation", {
     countedCash: countedCash ?? null,
+  });
+}
+
+// --- Sale Commands ---
+
+export async function recordSale(
+  request: RecordSaleRequest,
+  idempotencyKey: string,
+): Promise<SaleRecordedResponse> {
+  return invoke<SaleRecordedResponse>("record_sale", {
+    request,
+    idempotencyKey,
+  });
+}
+
+export async function recordCashOut(
+  amount: string,
+  detail: string | undefined,
+  idempotencyKey: string,
+): Promise<CashOutRecordedResponse> {
+  return invoke<CashOutRecordedResponse>("record_cash_out", {
+    amount,
+    detail: detail ?? null,
+    idempotencyKey,
   });
 }
