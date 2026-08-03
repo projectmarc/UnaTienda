@@ -243,6 +243,9 @@ pub fn run() {
 }
 
 #[cfg(test)]
+mod integration_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
