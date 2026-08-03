@@ -9,22 +9,11 @@ import {
   type ReconciliationView,
   type SessionHistoryResponse,
 } from "../../shared/tauri/commands";
+import { formatMoney, generateIdempotencyKey } from "../../shared/formatting";
+import { inputClassName } from "../../shared/ui";
 import CashOutForm from "./CashOutForm";
 import SaleForm from "./SaleForm";
 import SessionHistory from "./SessionHistory";
-
-function generateIdempotencyKey(): string {
-  return crypto.randomUUID();
-}
-
-function formatMoney(value: string): string {
-  const negative = value.startsWith("-");
-  const unsigned = negative ? value.slice(1) : value;
-  const [whole, decimals = "00"] = unsigned.split(".");
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-
-  return `${negative ? "-" : ""}$ ${grouped},${decimals.padEnd(2, "0")}`;
-}
 
 function errorMessage(action: "abrir" | "cerrar", error?: unknown): string {
   if (String(error).includes("DATABASE_UNAVAILABLE")) {
@@ -33,12 +22,16 @@ function errorMessage(action: "abrir" | "cerrar", error?: unknown): string {
   return `No se pudo ${action} la caja. Revisa la conexión e inténtalo de nuevo.`;
 }
 
-const inputClassName =
-  "h-12 w-full rounded-sm border border-input bg-muted px-3 font-mono text-lg tabular-nums outline-none transition-colors duration-150 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
-
 type SessionPhase = "operation" | "reconcile";
+export type SessionStep = "opening" | "operation" | "reconcile" | "closed";
 
-export default function SessionView() {
+interface SessionViewProps {
+  onProgressChange?: (step: SessionStep) => void;
+}
+
+export default function SessionView({
+  onProgressChange,
+}: SessionViewProps = {}) {
   const [session, setSession] = useState<ReconciliationView | null>(null);
   const [history, setHistory] = useState<SessionHistoryResponse | null>(null);
   const [openingAmount, setOpeningAmount] = useState("");
@@ -54,6 +47,17 @@ export default function SessionView() {
   const openKeyRef = useRef<string | null>(null);
   const closeKeyRef = useRef<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionStep: SessionStep = closedResult
+    ? "closed"
+    : !session
+      ? "opening"
+      : phase === "reconcile"
+        ? "reconcile"
+        : "operation";
+
+  useEffect(() => {
+    onProgressChange?.(sessionStep);
+  }, [onProgressChange, sessionStep]);
 
   const loadSession = useCallback(async (counted?: string) => {
     try {
@@ -233,9 +237,6 @@ export default function SessionView() {
   if (!session) {
     return (
       <section aria-labelledby="open-title" className="py-8">
-        <p className="text-xs font-semibold tracking-[0.16em] text-primary uppercase">
-          Paso 1 de 3 · Apertura
-        </p>
         <h2
           id="open-title"
           className="mt-2 text-3xl font-semibold tracking-tight"
@@ -292,53 +293,62 @@ export default function SessionView() {
   // Operation phase: record sales and cash-outs
   if (phase === "operation") {
     return (
-      <section aria-labelledby="operation-title" className="py-8">
-        <p className="text-xs font-semibold tracking-[0.16em] text-primary uppercase">
-          Paso 2 de 3 · Operación
-        </p>
-        <h2
-          id="operation-title"
-          className="mt-2 text-3xl font-semibold tracking-tight"
-        >
-          Registrar movimientos
-        </h2>
-        <p className="mt-2 text-foreground-secondary">
-          Efectivo esperado:{" "}
-          <span className="font-mono font-semibold">
-            {formatMoney(session.expectedCash)}
-          </span>
-        </p>
-
-        <div className="mt-8 grid gap-8 sm:grid-cols-2">
-          <div className="rounded-sm border border-border p-5">
-            <SaleForm onRecorded={handleOperationRecorded} />
-          </div>
-          <div className="rounded-sm border border-border p-5">
-            <CashOutForm onRecorded={handleOperationRecorded} />
-          </div>
-        </div>
-
-        {history && (
-          <SessionHistory
-            history={history}
-            onAnnulled={handleOperationRecorded}
-          />
-        )}
-
-        {error && (
-          <p className="mt-4 text-sm text-destructive" role="alert">
-            {error}
+      <section aria-labelledby="operation-title" className="py-6 sm:py-8">
+        <header className="border-b border-border pb-4">
+          <h2
+            id="operation-title"
+            className="text-3xl font-semibold tracking-tight"
+          >
+            Registrar movimientos
+          </h2>
+          <p className="mt-2 text-foreground-secondary">
+            Efectivo esperado:{" "}
+            <span className="font-mono font-semibold">
+              {formatMoney(session.expectedCash)}
+            </span>
           </p>
-        )}
+        </header>
 
-        <Button
-          className="mt-8"
-          onClick={() => setPhase("reconcile")}
-          size="lg"
-          variant="outline"
-        >
-          Proceder al cierre
-        </Button>
+        <div className="mt-6 grid min-h-0 gap-6 xl:grid-cols-[minmax(0,1.18fr)_minmax(19rem,0.82fr)]">
+          <div className="min-w-0">
+            <div className="grid gap-4 xl:grid-cols-2">
+              <div className="min-w-0 rounded-sm border border-border bg-card p-4 sm:p-5">
+                <SaleForm onRecorded={handleOperationRecorded} />
+              </div>
+              <div className="min-w-0 rounded-sm border border-border bg-card p-4 sm:p-5">
+                <CashOutForm onRecorded={handleOperationRecorded} />
+              </div>
+            </div>
+
+            {error && (
+              <p className="mt-4 text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            )}
+
+            <Button
+              className="mt-5 w-full sm:w-auto"
+              onClick={() => setPhase("reconcile")}
+              size="lg"
+              variant="outline"
+            >
+              Proceder al cierre
+            </Button>
+          </div>
+
+          {history && (
+            <aside
+              aria-label="Historial de operaciones de la sesión"
+              className="min-w-0 rounded-sm border border-border-subtle bg-secondary/30 p-4 xl:max-h-[calc(100dvh-9rem)] xl:overflow-y-auto xl:overscroll-contain xl:pr-3"
+            >
+              <SessionHistory
+                compact
+                history={history}
+                onAnnulled={handleOperationRecorded}
+              />
+            </aside>
+          )}
+        </div>
       </section>
     );
   }
@@ -361,9 +371,6 @@ export default function SessionView() {
 
   return (
     <section aria-labelledby="reconcile-title" className="py-8">
-      <p className="text-xs font-semibold tracking-[0.16em] text-primary uppercase">
-        Paso 3 de 3 · Cierre
-      </p>
       <h2
         id="reconcile-title"
         className="mt-2 text-3xl font-semibold tracking-tight"

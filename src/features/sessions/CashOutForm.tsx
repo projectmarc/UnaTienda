@@ -1,13 +1,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { recordCashOut } from "../../shared/tauri/commands";
-
-function generateIdempotencyKey(): string {
-  return crypto.randomUUID();
-}
-
-const inputClassName =
-  "h-12 w-full rounded-sm border border-input bg-muted px-3 font-mono text-lg tabular-nums outline-none transition-colors duration-150 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
+import { generateIdempotencyKey } from "../../shared/formatting";
+import { inputClassName } from "../../shared/ui";
 
 interface CashOutFormProps {
   onRecorded: () => void;
@@ -51,7 +46,7 @@ export default function CashOutForm({ onRecorded }: CashOutFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
       <h3 className="text-lg font-semibold">Salida de caja</h3>
 
       {/* Amount */}

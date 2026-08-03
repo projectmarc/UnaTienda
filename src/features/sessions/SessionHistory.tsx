@@ -1,46 +1,18 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   annulSale,
-  type PaymentMethod,
   type SessionHistoryResponse,
   type SessionOperation,
 } from "../../shared/tauri/commands";
 import { formatTime } from "../../shared/dateTime";
-
-function generateIdempotencyKey(): string {
-  return crypto.randomUUID();
-}
-
-function formatMoney(value: string): string {
-  const negative = value.startsWith("-");
-  const unsigned = negative ? value.slice(1) : value;
-  const [whole, decimals = "00"] = unsigned.split(".");
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-
-  return `${negative ? "-" : ""}$ ${grouped},${decimals.padEnd(2, "0")}`;
-}
-
-const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
-  { value: "cash", label: "Efectivo" },
-  { value: "transfer", label: "Transferencia" },
-  { value: "debit", label: "Débito" },
-  { value: "credit", label: "Crédito" },
-  { value: "qr", label: "QR" },
-];
-
-const CATEGORY_LABELS = {
-  ropa: "Ropa",
-  libreria: "Librería",
-  mixto: "Mixto",
-} as const;
-
-function paymentMethodLabel(method: PaymentMethod): string {
-  return (
-    PAYMENT_METHODS.find((paymentMethod) => paymentMethod.value === method)
-      ?.label ?? method
-  );
-}
+import { formatMoney, generateIdempotencyKey } from "../../shared/formatting";
+import {
+  PAYMENT_METHODS,
+  paymentMethodLabel,
+  saleCategoryLabel,
+} from "./constants";
 
 function operationLabel(operation: SessionOperation): string {
   return operation.operationType === "sale" ? "Venta" : "Salida de caja";
@@ -50,17 +22,48 @@ interface SessionHistoryProps {
   history: SessionHistoryResponse;
   onAnnulled?: () => void;
   readOnly?: boolean;
+  compact?: boolean;
 }
 
 export default function SessionHistory({
   history,
   onAnnulled,
   readOnly = false,
+  compact = false,
 }: SessionHistoryProps) {
   const [pendingSale, setPendingSale] = useState<SessionOperation | null>(null);
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const annulmentTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const annulmentDialogRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!pendingSale) {
+      annulmentTriggerRef.current?.focus();
+      annulmentTriggerRef.current = null;
+      return;
+    }
+
+    annulmentDialogRef.current
+      ?.querySelector<HTMLElement>("#annulment-reason")
+      ?.focus();
+  }, [pendingSale]);
+
+  useEffect(() => {
+    if (!pendingSale || !annulmentDialogRef.current) return;
+
+    const handleDialogKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || saving) return;
+
+      event.preventDefault();
+      setPendingSale(null);
+      setReason("");
+    };
+
+    document.addEventListener("keydown", handleDialogKeyDown);
+    return () => document.removeEventListener("keydown", handleDialogKeyDown);
+  }, [pendingSale, saving]);
 
   const requestAnnulment = (operation: SessionOperation) => {
     setError(null);
@@ -99,7 +102,7 @@ export default function SessionHistory({
   };
 
   return (
-    <section aria-labelledby="history-title" className="mt-8">
+    <section aria-labelledby="history-title" className={cn(!compact && "mt-8")}>
       <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border pb-3">
         <div>
           <p className="text-xs font-semibold tracking-[0.16em] text-foreground-tertiary uppercase">
@@ -115,7 +118,14 @@ export default function SessionHistory({
         </p>
       </div>
 
-      <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(15rem,0.75fr)]">
+      <div
+        className={cn(
+          "mt-4 gap-6",
+          compact
+            ? "flex flex-col gap-4"
+            : "grid lg:grid-cols-[minmax(0,1.5fr)_minmax(15rem,0.75fr)]",
+        )}
+      >
         <div className="rounded-sm border border-border bg-card">
           {history.operations.length === 0 ? (
             <p className="p-5 text-sm text-foreground-secondary">
@@ -132,7 +142,10 @@ export default function SessionHistory({
                   !readOnly && isSale && operation.status === "confirmed";
 
                 return (
-                  <li className="p-4 sm:p-5" key={operation.id}>
+                  <li
+                    className={cn("p-4", !compact && "sm:p-5")}
+                    key={operation.id}
+                  >
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -161,7 +174,7 @@ export default function SessionHistory({
                         </div>
                         <p className="mt-1 text-xs text-foreground-tertiary">
                           {isSale && operation.category
-                            ? `Rubro: ${CATEGORY_LABELS[operation.category]}`
+                            ? `Rubro: ${saleCategoryLabel(operation.category)}`
                             : "Retiro de efectivo"}
                         </p>
                       </div>
@@ -171,7 +184,7 @@ export default function SessionHistory({
                     </div>
 
                     {(operation.detail || operation.annulmentReason) && (
-                      <div className="mt-3 space-y-1 border-l-2 border-border-subtle pl-3 text-sm text-foreground-secondary">
+                      <div className="mt-3 flex flex-col gap-1 border-l-2 border-border-subtle pl-3 text-sm text-foreground-secondary">
                         {operation.detail && <p>{operation.detail}</p>}
                         {operation.annulmentReason && (
                           <p>
@@ -187,7 +200,7 @@ export default function SessionHistory({
                     {isSale && operation.payments.length > 0 && (
                       <ul
                         aria-label="Desglose del pago"
-                        className="mt-4 space-y-3 border-t border-border-subtle pt-3"
+                        className="mt-4 flex flex-col gap-3 border-t border-border-subtle pt-3"
                       >
                         {operation.payments.map((payment, index) => (
                           <li
@@ -214,7 +227,10 @@ export default function SessionHistory({
                       <Button
                         className="mt-4"
                         disabled={saving}
-                        onClick={() => requestAnnulment(operation)}
+                        onClick={(event) => {
+                          annulmentTriggerRef.current = event.currentTarget;
+                          requestAnnulment(operation);
+                        }}
                         size="sm"
                         type="button"
                         variant="outline"
@@ -231,7 +247,10 @@ export default function SessionHistory({
 
         <aside
           aria-labelledby="totals-title"
-          className="h-fit rounded-sm border border-border bg-secondary p-5"
+          className={cn(
+            "h-fit rounded-sm border border-border bg-secondary",
+            compact ? "p-4" : "p-5",
+          )}
         >
           <p className="text-xs font-semibold tracking-[0.16em] text-foreground-tertiary uppercase">
             Resumen
@@ -247,7 +266,7 @@ export default function SessionHistory({
               {formatMoney(history.expectedCash)}
             </p>
           </div>
-          <dl className="mt-4 space-y-3">
+          <dl className="mt-4 flex flex-col gap-3">
             {PAYMENT_METHODS.map((paymentMethod) => {
               const isTransfer = paymentMethod.value === "transfer";
 
@@ -275,7 +294,7 @@ export default function SessionHistory({
                       </p>
                       <dl
                         aria-label="Desglose de transferencias por cuenta"
-                        className="mt-2 space-y-2"
+                        className="mt-2 flex flex-col gap-2"
                       >
                         {history.transferTotals.map((total) => (
                           <div
@@ -306,6 +325,7 @@ export default function SessionHistory({
           aria-labelledby="annulment-title"
           aria-modal="true"
           className="mt-5 border border-border-strong bg-card p-5"
+          ref={annulmentDialogRef}
           role="alertdialog"
         >
           <p className="text-xs font-semibold tracking-[0.16em] text-destructive uppercase">

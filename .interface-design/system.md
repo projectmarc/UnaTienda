@@ -8,11 +8,14 @@ The primary workflow is linear: open a cash session, register sales and cash mov
 
 ## Structure
 
-- Let the current session and its timeline organize the application shell and screen hierarchy.
+- Use a persistent 224px left sidebar as the application shell. It shares the receipt-paper canvas with the content and uses one quiet graphite border for separation; it never collapses into a generic dashboard drawer.
+- Keep the primary navigation consistent: Operación, Historial, and Copias. The sidebar also carries session progress when the operation view is active.
+- Let the current session and its timeline organize the content hierarchy.
 - Keep the next contextual action obvious without hiding prior session events.
 - Use large, scannable monetary totals and clear labels; render money with a monospace face and tabular numerals.
 - Production UI copy is Spanish. This contract and implementation documentation remain English.
 - Design for efficient keyboard and mouse use on desktop while keeping controls comfortably targetable.
+- Use a fluid content region with a 1440px maximum measure. In operation, place compact forms beside a contained session-history panel; keep the 1280x720 path free of horizontal overflow.
 
 ## Visual Language
 
@@ -43,7 +46,7 @@ Implement with React and Tailwind CSS, using shadcn/ui or Base UI primitives whe
 
 ## Anti-Patterns
 
-- No sidebar, generic SaaS dashboard, metric-card grid, or disconnected card mosaic.
+- No generic SaaS dashboard, metric-card grid, or disconnected card mosaic. The persistent sidebar is intentional navigation and session context, not a dashboard template.
 - No decorative gradients, dramatic shadows, glass effects, marketing sections, or ornamental branding.
 - No excessive rounding, pill-shaped containers, floating white cards, thick borders, or abrupt surface-color jumps.
 - No multiple competing accents, decorative status colors, tiny financial figures, proportional money columns, or mobile-first visual treatment on the desktop POS.

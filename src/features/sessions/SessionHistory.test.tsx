@@ -112,6 +112,7 @@ describe("SessionHistory", () => {
     await user.click(screen.getByRole("button", { name: "Anular venta" }));
     expect(mockAnnulSale).not.toHaveBeenCalled();
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Motivo/)).toHaveFocus();
 
     const dialog = screen.getByRole("alertdialog");
     await user.type(
@@ -138,6 +139,19 @@ describe("SessionHistory", () => {
     await user.click(screen.getByRole("button", { name: "Cancelar" }));
 
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(mockAnnulSale).not.toHaveBeenCalled();
+  });
+
+  it("closes the confirmation with Escape and returns focus to its trigger", async () => {
+    const user = userEvent.setup();
+    render(<SessionHistory history={history} onAnnulled={vi.fn()} />);
+
+    const trigger = screen.getByRole("button", { name: "Anular venta" });
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
     expect(mockAnnulSale).not.toHaveBeenCalled();
   });
 });

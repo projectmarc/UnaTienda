@@ -75,7 +75,7 @@
 
   body {
     @apply m-0 min-w-80 bg-background text-foreground antialiased;
-    min-height: 100vh;
+    min-height: 100dvh;
   }
 
   button:not(:disabled) {

@@ -323,7 +323,11 @@ describe("SaleForm", () => {
     await user.click(screen.getByRole("button", { name: "Agregar" }));
 
     // Remove the additional payment
-    await user.click(screen.getByRole("button", { name: "✕" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: "Quitar pago adicional Débito de $30.00",
+      }),
+    );
 
     // Primary amount summary should show full total (100.00)
     const summary = screen.getByRole("region", {
