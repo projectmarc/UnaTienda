@@ -99,6 +99,22 @@ export interface SessionHistoryResponse {
   expectedCash: string;
 }
 
+export interface ClosedSessionSummary {
+  sessionId: string;
+  openedAt: string;
+  closedAt: string;
+  openingAmount: string;
+  expectedCash: string;
+  countedCash: string;
+  difference: string;
+}
+
+export interface ClosedSessionDetail extends ClosedSessionSummary {
+  operations: SessionOperation[];
+  paymentTotals: PaymentTotals;
+  transferTotals: TransferAccountTotal[];
+}
+
 // --- Cash Session Commands ---
 
 export async function openSession(
@@ -131,6 +147,18 @@ export async function getReconciliation(
 
 export async function getSessionHistory(): Promise<SessionHistoryResponse> {
   return invoke<SessionHistoryResponse>("get_session_history");
+}
+
+export async function listClosedSessions(): Promise<ClosedSessionSummary[]> {
+  return invoke<ClosedSessionSummary[]>("list_closed_sessions");
+}
+
+export async function getClosedSessionDetail(
+  sessionId: string,
+): Promise<ClosedSessionDetail> {
+  return invoke<ClosedSessionDetail>("get_closed_session_detail", {
+    sessionId,
+  });
 }
 
 // --- Sale Commands ---

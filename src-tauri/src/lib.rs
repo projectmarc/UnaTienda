@@ -202,6 +202,8 @@ pub fn run() {
             commands::cash_session_commands::close_session,
             commands::cash_session_commands::get_reconciliation,
             commands::cash_session_commands::get_session_history,
+            commands::cash_session_commands::list_closed_sessions,
+            commands::cash_session_commands::get_closed_session_detail,
             commands::sale_commands::record_sale,
             commands::sale_commands::record_cash_out,
             commands::sale_commands::annul_sale,

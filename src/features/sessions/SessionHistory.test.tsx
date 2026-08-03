@@ -72,8 +72,22 @@ describe("SessionHistory", () => {
     expect(operations.children).toHaveLength(2);
     expect(screen.getByText("Campera y cuaderno")).toBeInTheDocument();
     expect(screen.getByText("Rubro: Mixto")).toBeInTheDocument();
-    expect(screen.getByText("Destino: Juan")).toBeInTheDocument();
-    expect(screen.getByText("Destino: Carlos")).toBeInTheDocument();
+    const paymentBreakdown = screen.getByRole("list", {
+      name: "Desglose del pago",
+    });
+    const paymentRows = within(paymentBreakdown).getAllByRole("listitem");
+    expect(paymentRows).toHaveLength(3);
+    expect(paymentRows[0].children).toHaveLength(2);
+    expect(paymentRows[0].children[0]).toHaveTextContent("Efectivo");
+    expect(paymentRows[0].children[1]).toHaveTextContent("$ 70,00");
+    expect(paymentRows[1].children).toHaveLength(3);
+    expect(paymentRows[1].children[0]).toHaveTextContent("Transferencia");
+    expect(paymentRows[1].children[1]).toHaveTextContent("Destino: Juan");
+    expect(paymentRows[1].children[2]).toHaveTextContent("$ 30,00");
+    expect(paymentRows[2].children).toHaveLength(3);
+    expect(paymentRows[2].children[0]).toHaveTextContent("Transferencia");
+    expect(paymentRows[2].children[1]).toHaveTextContent("Destino: Carlos");
+    expect(paymentRows[2].children[2]).toHaveTextContent("$ 20,00");
     expect(screen.getByText("Compra de insumos")).toBeInTheDocument();
     expect(screen.getByText("Efectivo esperado")).toBeInTheDocument();
     expect(screen.getByText("$ 150,00")).toBeInTheDocument();

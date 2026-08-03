@@ -6,6 +6,7 @@ import {
   type SessionHistoryResponse,
   type SessionOperation,
 } from "../../shared/tauri/commands";
+import { formatTime } from "../../shared/dateTime";
 
 function generateIdempotencyKey(): string {
   return crypto.randomUUID();
@@ -18,13 +19,6 @@ function formatMoney(value: string): string {
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 
   return `${negative ? "-" : ""}$ ${grouped},${decimals.padEnd(2, "0")}`;
-}
-
-function formatTime(value: string): string {
-  return new Intl.DateTimeFormat("es-AR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
 }
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
@@ -54,12 +48,14 @@ function operationLabel(operation: SessionOperation): string {
 
 interface SessionHistoryProps {
   history: SessionHistoryResponse;
-  onAnnulled: () => void;
+  onAnnulled?: () => void;
+  readOnly?: boolean;
 }
 
 export default function SessionHistory({
   history,
   onAnnulled,
+  readOnly = false,
 }: SessionHistoryProps) {
   const [pendingSale, setPendingSale] = useState<SessionOperation | null>(null);
   const [reason, setReason] = useState("");
@@ -93,7 +89,7 @@ export default function SessionHistory({
       );
       setPendingSale(null);
       setReason("");
-      onAnnulled();
+      onAnnulled?.();
     } catch (err: unknown) {
       const message = typeof err === "string" ? err : String(err);
       setError(`No se pudo anular la venta. ${message}`);
@@ -133,7 +129,7 @@ export default function SessionHistory({
               {history.operations.map((operation) => {
                 const isSale = operation.operationType === "sale";
                 const isConfirmedSale =
-                  isSale && operation.status === "confirmed";
+                  !readOnly && isSale && operation.status === "confirmed";
 
                 return (
                   <li className="p-4 sm:p-5" key={operation.id}>
@@ -191,24 +187,24 @@ export default function SessionHistory({
                     {isSale && operation.payments.length > 0 && (
                       <ul
                         aria-label="Desglose del pago"
-                        className="mt-4 grid gap-2 border-t border-border-subtle pt-3 sm:grid-cols-2"
+                        className="mt-4 space-y-3 border-t border-border-subtle pt-3"
                       >
                         {operation.payments.map((payment, index) => (
                           <li
-                            className="flex items-start justify-between gap-3 text-sm"
+                            className="min-w-0 text-sm"
                             key={`${payment.method}-${index}`}
                           >
-                            <span>
+                            <p className="font-medium whitespace-normal break-normal">
                               {paymentMethodLabel(payment.method)}
-                              {payment.recipientAccount && (
-                                <span className="block text-xs text-foreground-tertiary">
-                                  Destino: {payment.recipientAccount}
-                                </span>
-                              )}
-                            </span>
-                            <span className="money shrink-0 tabular-nums">
+                            </p>
+                            {payment.recipientAccount && (
+                              <p className="mt-1 break-words text-xs text-foreground-tertiary">
+                                Destino: {payment.recipientAccount}
+                              </p>
+                            )}
+                            <p className="money mt-1 whitespace-nowrap tabular-nums">
                               {formatMoney(payment.amount)}
-                            </span>
+                            </p>
                           </li>
                         ))}
                       </ul>

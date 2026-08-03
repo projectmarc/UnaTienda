@@ -1,7 +1,8 @@
 use tauri::State;
 
 use crate::application::cash_session_use_case::{
-    self, ClosedSessionResponse, OpenSessionResponse, ReconciliationView, SessionHistoryResponse,
+    self, ClosedSessionDetailResponse, ClosedSessionResponse, ClosedSessionSummary,
+    OpenSessionResponse, ReconciliationView, SessionHistoryResponse,
 };
 use crate::AppState;
 
@@ -75,6 +76,33 @@ pub async fn get_session_history(
     state: State<'_, AppState>,
 ) -> Result<SessionHistoryResponse, String> {
     cash_session_use_case::get_session_history(&state.db.pool())
+        .await
+        .map_err(|e| {
+            serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
+                .unwrap_or_else(|_| e.to_string())
+        })
+}
+
+/// List closed cash sessions in reverse chronological order.
+#[tauri::command]
+pub async fn list_closed_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<ClosedSessionSummary>, String> {
+    cash_session_use_case::list_closed_sessions(&state.db.pool())
+        .await
+        .map_err(|e| {
+            serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
+                .unwrap_or_else(|_| e.to_string())
+        })
+}
+
+/// Get read-only operations and final reconciliation for one closed session.
+#[tauri::command]
+pub async fn get_closed_session_detail(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<ClosedSessionDetailResponse, String> {
+    cash_session_use_case::get_closed_session_detail(&state.db.pool(), &session_id)
         .await
         .map_err(|e| {
             serde_json::to_string(&crate::domain::ErrorResponse::from(&e))

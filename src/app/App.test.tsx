@@ -13,6 +13,9 @@ describe("App", () => {
     expect(
       screen.getByRole("heading", { name: "UnaTienda" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Historial de cajas" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Flujo de sesión conectado")).toBeInTheDocument();
     expect(
       screen.queryByText("Base de interfaz lista"),
