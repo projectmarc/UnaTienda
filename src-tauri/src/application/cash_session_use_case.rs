@@ -100,6 +100,35 @@ pub struct SessionHistoryResponse {
     pub expected_cash: String,
 }
 
+/// Reconciliation summary for a closed session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClosedSessionSummary {
+    pub session_id: String,
+    pub opened_at: String,
+    pub closed_at: String,
+    pub opening_amount: String,
+    pub expected_cash: String,
+    pub counted_cash: String,
+    pub difference: String,
+}
+
+/// Read-only operation history and reconciliation for a closed session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClosedSessionDetailResponse {
+    pub session_id: String,
+    pub opened_at: String,
+    pub closed_at: String,
+    pub opening_amount: String,
+    pub expected_cash: String,
+    pub counted_cash: String,
+    pub difference: String,
+    pub operations: Vec<SessionOperation>,
+    pub payment_totals: PaymentTotals,
+    pub transfer_totals: Vec<TransferAccountTotal>,
+}
+
 /// Open a new cash session.
 ///
 /// Enforces the single-open-session invariant (the database partial unique
@@ -296,22 +325,21 @@ pub async fn get_reconciliation(
     })
 }
 
-/// Get the chronological operations and current net totals for the open session.
-pub async fn get_session_history(pool: &Pool) -> Result<SessionHistoryResponse, AppError> {
-    let session = cash_session_repo::get_open(pool)
-        .await?
-        .ok_or(AppError::NoOpenSession)?;
-    let history = cash_session_repo::get_history(pool, &session.id).await?;
-    let expected_cash = cash_session_repo::get_expected_cash(pool, &session.id).await?;
-
-    let crate::persistence::cash_session_repo::SessionHistoryRows {
+fn map_history_rows(
+    history: cash_session_repo::SessionHistoryRows,
+) -> (
+    Vec<SessionOperation>,
+    PaymentTotals,
+    Vec<TransferAccountTotal>,
+) {
+    let cash_session_repo::SessionHistoryRows {
         operations,
         payment_totals,
         transfer_totals,
     } = history;
 
-    Ok(SessionHistoryResponse {
-        operations: operations
+    (
+        operations
             .into_iter()
             .map(|operation| SessionOperation {
                 id: operation.id,
@@ -333,21 +361,103 @@ pub async fn get_session_history(pool: &Pool) -> Result<SessionHistoryResponse, 
                 annulment_reason: operation.annulment_reason,
             })
             .collect(),
-        payment_totals: PaymentTotals {
+        PaymentTotals {
             cash: Money::from_cents(payment_totals.cash).to_string(),
             transfer: Money::from_cents(payment_totals.transfer).to_string(),
             debit: Money::from_cents(payment_totals.debit).to_string(),
             credit: Money::from_cents(payment_totals.credit).to_string(),
             qr: Money::from_cents(payment_totals.qr).to_string(),
         },
-        transfer_totals: transfer_totals
+        transfer_totals
             .into_iter()
             .map(|total| TransferAccountTotal {
                 recipient_account: total.recipient_account,
                 amount: Money::from_cents(total.amount).to_string(),
             })
             .collect(),
+    )
+}
+
+fn closed_session_summary(
+    row: cash_session_repo::CashSessionRow,
+    expected_cash: i64,
+) -> Result<ClosedSessionSummary, AppError> {
+    let counted_cash = row
+        .counted_cash
+        .ok_or_else(|| AppError::Database("closed session is missing counted cash".to_string()))?;
+    let difference = row
+        .difference
+        .ok_or_else(|| AppError::Database("closed session is missing difference".to_string()))?;
+    let closed_at = row.closed_at.ok_or_else(|| {
+        AppError::Database("closed session is missing closed timestamp".to_string())
+    })?;
+
+    Ok(ClosedSessionSummary {
+        session_id: row.id,
+        opened_at: row.opened_at,
+        closed_at,
+        opening_amount: Money::from_cents(row.opening_amount).to_string(),
         expected_cash: Money::from_cents(expected_cash).to_string(),
+        counted_cash: Money::from_cents(counted_cash).to_string(),
+        difference: Money::from_cents(difference).to_string(),
+    })
+}
+
+/// Get the chronological operations and current net totals for the open session.
+pub async fn get_session_history(pool: &Pool) -> Result<SessionHistoryResponse, AppError> {
+    let session = cash_session_repo::get_open(pool)
+        .await?
+        .ok_or(AppError::NoOpenSession)?;
+    let history = cash_session_repo::get_history(pool, &session.id).await?;
+    let expected_cash = cash_session_repo::get_expected_cash(pool, &session.id).await?;
+
+    let (operations, payment_totals, transfer_totals) = map_history_rows(history);
+
+    Ok(SessionHistoryResponse {
+        operations,
+        payment_totals,
+        transfer_totals,
+        expected_cash: Money::from_cents(expected_cash).to_string(),
+    })
+}
+
+/// List all closed sessions in reverse chronological order.
+pub async fn list_closed_sessions(pool: &Pool) -> Result<Vec<ClosedSessionSummary>, AppError> {
+    let rows = cash_session_repo::list_closed(pool).await?;
+    let mut summaries = Vec::with_capacity(rows.len());
+
+    for row in rows {
+        let expected_cash = cash_session_repo::get_expected_cash_for_session(pool, &row.id).await?;
+        summaries.push(closed_session_summary(row, expected_cash)?);
+    }
+
+    Ok(summaries)
+}
+
+/// Get the immutable operation history and final reconciliation of one closed session.
+pub async fn get_closed_session_detail(
+    pool: &Pool,
+    session_id: &str,
+) -> Result<ClosedSessionDetailResponse, AppError> {
+    let row = cash_session_repo::get_closed(pool, session_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let expected_cash = cash_session_repo::get_expected_cash_for_session(pool, &row.id).await?;
+    let summary = closed_session_summary(row, expected_cash)?;
+    let history = cash_session_repo::get_history(pool, &summary.session_id).await?;
+    let (operations, payment_totals, transfer_totals) = map_history_rows(history);
+
+    Ok(ClosedSessionDetailResponse {
+        session_id: summary.session_id,
+        opened_at: summary.opened_at,
+        closed_at: summary.closed_at,
+        opening_amount: summary.opening_amount,
+        expected_cash: summary.expected_cash,
+        counted_cash: summary.counted_cash,
+        difference: summary.difference,
+        operations,
+        payment_totals,
+        transfer_totals,
     })
 }
 
@@ -1070,5 +1180,176 @@ mod tests {
         assert_eq!(after.transfer_totals[0].recipient_account, "Carlos");
         assert_eq!(after.transfer_totals[0].amount, "20.00");
         assert_eq!(after.expected_cash, "100.00");
+    }
+
+    #[tokio::test]
+    async fn closed_session_list_is_empty_then_reverse_chronological() {
+        let (_dir, pool) = setup_db().await;
+
+        assert!(list_closed_sessions(&pool).await.unwrap().is_empty());
+
+        pool.get()
+            .await
+            .unwrap()
+            .interact(|conn| {
+                conn.execute(
+                    "INSERT INTO cash_sessions (id, status, opening_amount, counted_cash, difference, opened_at, closed_at) VALUES (?1, 'closed', ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![
+                        "closed-old",
+                        1000,
+                        1000,
+                        0,
+                        "2026-08-01T09:00:00Z",
+                        "2026-08-01T18:00:00Z"
+                    ],
+                )?;
+                conn.execute(
+                    "INSERT INTO cash_sessions (id, status, opening_amount, counted_cash, difference, opened_at, closed_at) VALUES (?1, 'closed', ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![
+                        "closed-new",
+                        2000,
+                        2100,
+                        100,
+                        "2026-08-02T09:00:00Z",
+                        "2026-08-02T18:00:00Z"
+                    ],
+                )?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        let sessions = list_closed_sessions(&pool).await.unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].session_id, "closed-new");
+        assert_eq!(sessions[0].opened_at, "2026-08-02T09:00:00Z");
+        assert_eq!(sessions[0].closed_at, "2026-08-02T18:00:00Z");
+        assert_eq!(sessions[0].opening_amount, "20.00");
+        assert_eq!(sessions[0].expected_cash, "20.00");
+        assert_eq!(sessions[0].counted_cash, "21.00");
+        assert_eq!(sessions[0].difference, "1.00");
+        assert_eq!(sessions[1].session_id, "closed-old");
+    }
+
+    #[tokio::test]
+    async fn closed_session_detail_preserves_annulled_split_sale_and_net_totals() {
+        let (_dir, pool) = setup_db().await;
+        let open = open_session(&pool, 10000, "key-closed-detail-open")
+            .await
+            .unwrap();
+
+        let annulled_sale = record_sale(
+            &pool,
+            RecordSaleRequest {
+                total_amount: "100.00".to_string(),
+                category: "mixto".to_string(),
+                detail: Some("campera y cuaderno".to_string()),
+                payments: vec![
+                    PaymentPartRequest {
+                        method: "cash".to_string(),
+                        amount: "40.00".to_string(),
+                        recipient_account: None,
+                    },
+                    PaymentPartRequest {
+                        method: "transfer".to_string(),
+                        amount: "30.00".to_string(),
+                        recipient_account: Some("Juan".to_string()),
+                    },
+                    PaymentPartRequest {
+                        method: "transfer".to_string(),
+                        amount: "30.00".to_string(),
+                        recipient_account: Some("Carlos".to_string()),
+                    },
+                ],
+            },
+            "key-closed-detail-annulled-sale",
+        )
+        .await
+        .unwrap();
+        record_sale(
+            &pool,
+            RecordSaleRequest {
+                total_amount: "20.00".to_string(),
+                category: "ropa".to_string(),
+                detail: Some("bufanda".to_string()),
+                payments: vec![PaymentPartRequest {
+                    method: "transfer".to_string(),
+                    amount: "20.00".to_string(),
+                    recipient_account: Some("Carlos".to_string()),
+                }],
+            },
+            "key-closed-detail-confirmed-sale",
+        )
+        .await
+        .unwrap();
+        let cash_out = record_cash_out(
+            &pool,
+            "5.00".to_string(),
+            Some("compra de insumos".to_string()),
+            "key-closed-detail-cash-out",
+        )
+        .await
+        .unwrap();
+
+        crate::application::sale_use_case::annul_sale(
+            &pool,
+            crate::application::sale_use_case::AnnulSaleRequest {
+                sale_id: annulled_sale.sale_id.clone(),
+                reason: Some("error de carga".to_string()),
+            },
+            "key-closed-detail-annulment",
+        )
+        .await
+        .unwrap();
+
+        close_session(&pool, 9500, "key-closed-detail-close")
+            .await
+            .unwrap();
+
+        let detail = get_closed_session_detail(&pool, &open.session_id)
+            .await
+            .unwrap();
+        assert_eq!(detail.session_id, open.session_id);
+        assert_eq!(detail.opening_amount, "100.00");
+        assert_eq!(detail.expected_cash, "95.00");
+        assert_eq!(detail.counted_cash, "95.00");
+        assert_eq!(detail.difference, "0.00");
+        assert_eq!(detail.operations.len(), 3);
+
+        let annulled = detail
+            .operations
+            .iter()
+            .find(|operation| operation.id == annulled_sale.sale_id)
+            .unwrap();
+        assert_eq!(annulled.status.as_deref(), Some("annulled"));
+        assert_eq!(annulled.category.as_deref(), Some("mixto"));
+        assert_eq!(annulled.detail.as_deref(), Some("campera y cuaderno"));
+        assert_eq!(annulled.annulment_reason.as_deref(), Some("error de carga"));
+        assert_eq!(annulled.payments.len(), 3);
+        assert!(annulled
+            .payments
+            .iter()
+            .any(|payment| payment.recipient_account.as_deref() == Some("Juan")));
+        assert!(annulled
+            .payments
+            .iter()
+            .any(|payment| payment.recipient_account.as_deref() == Some("Carlos")));
+
+        let cash_out_operation = detail
+            .operations
+            .iter()
+            .find(|operation| operation.id == cash_out.movement_id)
+            .unwrap();
+        assert_eq!(cash_out_operation.operation_type, "cash_out");
+        assert_eq!(
+            cash_out_operation.detail.as_deref(),
+            Some("compra de insumos")
+        );
+        assert_eq!(detail.payment_totals.cash, "0.00");
+        assert_eq!(detail.payment_totals.transfer, "20.00");
+        assert_eq!(detail.transfer_totals.len(), 1);
+        assert_eq!(detail.transfer_totals[0].recipient_account, "Carlos");
+        assert_eq!(detail.transfer_totals[0].amount, "20.00");
     }
 }

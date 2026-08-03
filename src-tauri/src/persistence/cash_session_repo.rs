@@ -136,6 +136,64 @@ pub async fn get_open(pool: &Pool) -> Result<Option<CashSession>, AppError> {
     Ok(row.map(|r| r.to_domain()))
 }
 
+/// Query closed sessions in reverse chronological order.
+pub async fn list_closed(pool: &Pool) -> Result<Vec<CashSessionRow>, AppError> {
+    pool.get()
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .interact(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT id, status, opening_amount, counted_cash, difference, opened_at, closed_at FROM cash_sessions WHERE status = 'closed' ORDER BY closed_at DESC, id DESC",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok(CashSessionRow {
+                        id: row.get(0)?,
+                        status: row.get(1)?,
+                        opening_amount: row.get(2)?,
+                        counted_cash: row.get(3)?,
+                        difference: row.get(4)?,
+                        opened_at: row.get(5)?,
+                        closed_at: row.get(6)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok::<_, rusqlite::Error>(rows)
+        })
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .map_err(AppError::from)
+}
+
+/// Query one closed session by ID.
+pub async fn get_closed(pool: &Pool, session_id: &str) -> Result<Option<CashSessionRow>, AppError> {
+    let sid = session_id.to_string();
+    pool.get()
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .interact(move |conn| {
+            conn.query_row(
+                "SELECT id, status, opening_amount, counted_cash, difference, opened_at, closed_at FROM cash_sessions WHERE id = ?1 AND status = 'closed'",
+                [&sid],
+                |row| {
+                    Ok(CashSessionRow {
+                        id: row.get(0)?,
+                        status: row.get(1)?,
+                        opening_amount: row.get(2)?,
+                        counted_cash: row.get(3)?,
+                        difference: row.get(4)?,
+                        opened_at: row.get(5)?,
+                        closed_at: row.get(6)?,
+                    })
+                },
+            )
+            .optional()
+        })
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .map_err(AppError::from)
+}
+
 /// Snapshot the session data and close it atomically.
 ///
 /// Updates the session row with `counted_cash`, `difference`, `closed_at`,
@@ -175,15 +233,19 @@ pub async fn snapshot_and_close(pool: &Pool, session: &CashSession) -> Result<()
 ///   − withdrawal movements
 ///
 /// Returns 0 if no session is open or no aggregations exist.
-pub async fn get_expected_cash(pool: &Pool, session_id: &str) -> Result<i64, AppError> {
+async fn query_expected_cash(
+    pool: &Pool,
+    session_id: &str,
+    only_open: bool,
+) -> Result<i64, AppError> {
     let sid = session_id.to_string();
-    let result: Option<i64> = pool
-        .get()
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?
-        .interact(move |conn| {
-            conn.query_row(
-                r#"
+    let status_condition = if only_open {
+        " AND cs.status = 'open'"
+    } else {
+        ""
+    };
+    let query = format!(
+        r#"
                 SELECT
                     COALESCE(cs.opening_amount, 0)
                     + COALESCE((
@@ -216,20 +278,34 @@ pub async fn get_expected_cash(pool: &Pool, session_id: &str) -> Result<i64, App
                         WHERE m.session_id = cs.id
                     ), 0)
                 FROM cash_sessions cs
-                WHERE cs.id = ?1 AND cs.status = 'open'
+                WHERE cs.id = ?1{}
                 "#,
-                [&sid],
-                |row| {
-                    let val: i64 = row.get(0)?;
-                    Ok(val)
-                },
-            )
+        status_condition
+    );
+    let result: Option<i64> = pool
+        .get()
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .interact(move |conn| {
+            conn.query_row(&query, [&sid], |row| {
+                let val: i64 = row.get(0)?;
+                Ok(val)
+            })
             .optional()
         })
         .await
         .map_err(|e| AppError::Database(e.to_string()))??;
 
     Ok(result.unwrap_or(0))
+}
+
+pub async fn get_expected_cash(pool: &Pool, session_id: &str) -> Result<i64, AppError> {
+    query_expected_cash(pool, session_id, true).await
+}
+
+/// Query expected cash for an open or closed session.
+pub async fn get_expected_cash_for_session(pool: &Pool, session_id: &str) -> Result<i64, AppError> {
+    query_expected_cash(pool, session_id, false).await
 }
 
 /// Query the chronological operations and net payment totals for a session.
