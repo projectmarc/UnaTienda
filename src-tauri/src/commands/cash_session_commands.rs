@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::application::cash_session_use_case::{
-    self, ClosedSessionResponse, OpenSessionResponse, ReconciliationView,
+    self, ClosedSessionResponse, OpenSessionResponse, ReconciliationView, SessionHistoryResponse,
 };
 use crate::AppState;
 
@@ -61,6 +61,20 @@ pub async fn get_reconciliation(
     counted_cash: Option<String>,
 ) -> Result<ReconciliationView, String> {
     cash_session_use_case::get_reconciliation(&state.db.pool(), counted_cash.as_deref())
+        .await
+        .map_err(|e| {
+            serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
+                .unwrap_or_else(|_| e.to_string())
+        })
+}
+
+/// Get chronological operations, net payment totals, and expected cash for
+/// the current open session.
+#[tauri::command]
+pub async fn get_session_history(
+    state: State<'_, AppState>,
+) -> Result<SessionHistoryResponse, String> {
+    cash_session_use_case::get_session_history(&state.db.pool())
         .await
         .map_err(|e| {
             serde_json::to_string(&crate::domain::ErrorResponse::from(&e))

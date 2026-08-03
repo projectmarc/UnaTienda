@@ -3,12 +3,15 @@ import { Button } from "@/components/ui/button";
 import {
   closeSession,
   getReconciliation,
+  getSessionHistory,
   openSession,
   type ClosedSessionResponse,
   type ReconciliationView,
+  type SessionHistoryResponse,
 } from "../../shared/tauri/commands";
 import CashOutForm from "./CashOutForm";
 import SaleForm from "./SaleForm";
+import SessionHistory from "./SessionHistory";
 
 function generateIdempotencyKey(): string {
   return crypto.randomUUID();
@@ -34,6 +37,7 @@ type SessionPhase = "operation" | "reconcile";
 
 export default function SessionView() {
   const [session, setSession] = useState<ReconciliationView | null>(null);
+  const [history, setHistory] = useState<SessionHistoryResponse | null>(null);
   const [openingAmount, setOpeningAmount] = useState("");
   const [countedCash, setCountedCash] = useState("");
   const [closedResult, setClosedResult] =
@@ -52,7 +56,16 @@ export default function SessionView() {
     try {
       setLoading(true);
       setError(null);
-      setSession(await getReconciliation(counted));
+      const nextSession = await getReconciliation(counted);
+      setSession(nextSession);
+      try {
+        setHistory(await getSessionHistory());
+      } catch {
+        setHistory(null);
+        setError(
+          "No se pudo consultar el historial de la sesión. Inténtalo de nuevo.",
+        );
+      }
     } catch (err: unknown) {
       const message = typeof err === "string" ? err : String(err);
       if (
@@ -60,6 +73,7 @@ export default function SessionView() {
         message.includes("no open session")
       ) {
         setSession(null);
+        setHistory(null);
       } else {
         setError("No se pudo consultar la sesión de caja. Inténtalo de nuevo.");
       }
@@ -126,6 +140,7 @@ export default function SessionView() {
       );
       setClosedResult(result);
       setSession(null);
+      setHistory(null);
       closeKeyRef.current = null;
     } catch {
       setError(errorMessage("cerrar"));
@@ -284,6 +299,13 @@ export default function SessionView() {
             <CashOutForm onRecorded={handleOperationRecorded} />
           </div>
         </div>
+
+        {history && (
+          <SessionHistory
+            history={history}
+            onAnnulled={handleOperationRecorded}
+          />
+        )}
 
         {error && (
           <p className="mt-4 text-sm text-destructive" role="alert">

@@ -51,6 +51,54 @@ export interface CashOutRecordedResponse {
   amount: string;
 }
 
+export interface AnnulSaleRequest {
+  saleId: string;
+  reason?: string;
+}
+
+export interface SaleAnnulledResponse {
+  saleId: string;
+  status: "annulled";
+}
+
+export interface SessionPayment {
+  method: PaymentMethod;
+  amount: string;
+  recipientAccount?: string;
+}
+
+export interface SessionOperation {
+  id: string;
+  occurredAt: string;
+  operationType: "sale" | "cash_out";
+  amount: string;
+  detail?: string;
+  category?: SaleCategory;
+  payments: SessionPayment[];
+  status?: "confirmed" | "annulled";
+  annulmentReason?: string;
+}
+
+export interface PaymentTotals {
+  cash: string;
+  transfer: string;
+  debit: string;
+  credit: string;
+  qr: string;
+}
+
+export interface TransferAccountTotal {
+  recipientAccount: string;
+  amount: string;
+}
+
+export interface SessionHistoryResponse {
+  operations: SessionOperation[];
+  paymentTotals: PaymentTotals;
+  transferTotals: TransferAccountTotal[];
+  expectedCash: string;
+}
+
 // --- Cash Session Commands ---
 
 export async function openSession(
@@ -81,6 +129,10 @@ export async function getReconciliation(
   });
 }
 
+export async function getSessionHistory(): Promise<SessionHistoryResponse> {
+  return invoke<SessionHistoryResponse>("get_session_history");
+}
+
 // --- Sale Commands ---
 
 export async function recordSale(
@@ -101,6 +153,16 @@ export async function recordCashOut(
   return invoke<CashOutRecordedResponse>("record_cash_out", {
     amount,
     detail: detail ?? null,
+    idempotencyKey,
+  });
+}
+
+export async function annulSale(
+  request: AnnulSaleRequest,
+  idempotencyKey: string,
+): Promise<SaleAnnulledResponse> {
+  return invoke<SaleAnnulledResponse>("annul_sale", {
+    request,
     idempotencyKey,
   });
 }

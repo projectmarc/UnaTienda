@@ -1,7 +1,8 @@
 use tauri::State;
 
 use crate::application::sale_use_case::{
-    self, CashOutRecordedResponse, RecordSaleRequest, SaleRecordedResponse,
+    self, AnnulSaleRequest, CashOutRecordedResponse, RecordSaleRequest, SaleAnnulledResponse,
+    SaleRecordedResponse,
 };
 use crate::AppState;
 
@@ -36,6 +37,21 @@ pub async fn record_cash_out(
     idempotency_key: String,
 ) -> Result<CashOutRecordedResponse, String> {
     sale_use_case::record_cash_out(&state.db.pool(), amount, detail, &idempotency_key)
+        .await
+        .map_err(|e| {
+            serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
+                .unwrap_or_else(|_| e.to_string())
+        })
+}
+
+/// Annul a confirmed sale while its owning session remains open.
+#[tauri::command]
+pub async fn annul_sale(
+    state: State<'_, AppState>,
+    request: AnnulSaleRequest,
+    idempotency_key: String,
+) -> Result<SaleAnnulledResponse, String> {
+    sale_use_case::annul_sale(&state.db.pool(), request, &idempotency_key)
         .await
         .map_err(|e| {
             serde_json::to_string(&crate::domain::ErrorResponse::from(&e))

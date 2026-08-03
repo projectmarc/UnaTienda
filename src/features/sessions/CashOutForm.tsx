@@ -80,7 +80,9 @@ export default function CashOutForm({ onRecorded }: CashOutFormProps) {
       <div>
         <label className="text-sm font-semibold" htmlFor="cashout-detail">
           Motivo{" "}
-          <span className="font-normal text-foreground-tertiary">(opcional)</span>
+          <span className="font-normal text-foreground-tertiary">
+            (opcional)
+          </span>
         </label>
         <input
           className="mt-2 h-10 w-full rounded-sm border border-input bg-muted px-3 text-sm outline-none transition-colors duration-150 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35"

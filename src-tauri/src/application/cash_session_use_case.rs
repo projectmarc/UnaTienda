@@ -42,6 +42,64 @@ pub struct ReconciliationView {
     pub difference: Option<String>,
 }
 
+/// A payment part shown in the open-session history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPayment {
+    pub method: String,
+    pub amount: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipient_account: Option<String>,
+}
+
+/// A sale or cash-out shown in the open-session history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionOperation {
+    pub id: String,
+    pub occurred_at: String,
+    pub operation_type: String,
+    pub amount: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    pub payments: Vec<SessionPayment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annulment_reason: Option<String>,
+}
+
+/// Net totals by payment method for the open session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentTotals {
+    pub cash: String,
+    pub transfer: String,
+    pub debit: String,
+    pub credit: String,
+    pub qr: String,
+}
+
+/// Net transfer totals grouped by recipient account for the open session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferAccountTotal {
+    pub recipient_account: String,
+    pub amount: String,
+}
+
+/// History, payment totals, and expected cash for the open session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistoryResponse {
+    pub operations: Vec<SessionOperation>,
+    pub payment_totals: PaymentTotals,
+    pub transfer_totals: Vec<TransferAccountTotal>,
+    pub expected_cash: String,
+}
+
 /// Open a new cash session.
 ///
 /// Enforces the single-open-session invariant (the database partial unique
@@ -238,9 +296,67 @@ pub async fn get_reconciliation(
     })
 }
 
+/// Get the chronological operations and current net totals for the open session.
+pub async fn get_session_history(pool: &Pool) -> Result<SessionHistoryResponse, AppError> {
+    let session = cash_session_repo::get_open(pool)
+        .await?
+        .ok_or(AppError::NoOpenSession)?;
+    let history = cash_session_repo::get_history(pool, &session.id).await?;
+    let expected_cash = cash_session_repo::get_expected_cash(pool, &session.id).await?;
+
+    let crate::persistence::cash_session_repo::SessionHistoryRows {
+        operations,
+        payment_totals,
+        transfer_totals,
+    } = history;
+
+    Ok(SessionHistoryResponse {
+        operations: operations
+            .into_iter()
+            .map(|operation| SessionOperation {
+                id: operation.id,
+                occurred_at: operation.occurred_at,
+                operation_type: operation.operation_type,
+                amount: Money::from_cents(operation.amount).to_string(),
+                detail: operation.detail,
+                category: operation.category,
+                payments: operation
+                    .payments
+                    .into_iter()
+                    .map(|payment| SessionPayment {
+                        method: payment.method,
+                        amount: Money::from_cents(payment.amount).to_string(),
+                        recipient_account: payment.recipient_account,
+                    })
+                    .collect(),
+                status: operation.status,
+                annulment_reason: operation.annulment_reason,
+            })
+            .collect(),
+        payment_totals: PaymentTotals {
+            cash: Money::from_cents(payment_totals.cash).to_string(),
+            transfer: Money::from_cents(payment_totals.transfer).to_string(),
+            debit: Money::from_cents(payment_totals.debit).to_string(),
+            credit: Money::from_cents(payment_totals.credit).to_string(),
+            qr: Money::from_cents(payment_totals.qr).to_string(),
+        },
+        transfer_totals: transfer_totals
+            .into_iter()
+            .map(|total| TransferAccountTotal {
+                recipient_account: total.recipient_account,
+                amount: Money::from_cents(total.amount).to_string(),
+            })
+            .collect(),
+        expected_cash: Money::from_cents(expected_cash).to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::sale_use_case::{
+        record_cash_out, record_sale, PaymentPartRequest, RecordSaleRequest,
+    };
     use crate::persistence::connection::{open_pool, run_migrations};
     use tempfile::TempDir;
     use uuid::Uuid;
@@ -782,5 +898,177 @@ mod tests {
         assert_eq!(view.expected_cash, "100.00");
         assert_eq!(view.counted_cash, Some("100.00".to_string()));
         assert_eq!(view.difference, Some("0.00".to_string()));
+    }
+
+    #[tokio::test]
+    async fn session_history_orders_operations_and_exposes_details_and_totals() {
+        let (_dir, pool) = setup_db().await;
+        open_session(&pool, 10000, "key-open").await.unwrap();
+
+        let sale = record_sale(
+            &pool,
+            RecordSaleRequest {
+                total_amount: "120.00".to_string(),
+                category: "mixto".to_string(),
+                detail: Some("campera y cuaderno".to_string()),
+                payments: vec![
+                    PaymentPartRequest {
+                        method: "cash".to_string(),
+                        amount: "70.00".to_string(),
+                        recipient_account: None,
+                    },
+                    PaymentPartRequest {
+                        method: "transfer".to_string(),
+                        amount: "50.00".to_string(),
+                        recipient_account: Some("Juan".to_string()),
+                    },
+                ],
+            },
+            "key-sale-history",
+        )
+        .await
+        .unwrap();
+        let cash_out = record_cash_out(
+            &pool,
+            "20.00".to_string(),
+            Some("compra de insumos".to_string()),
+            "key-cash-out-history",
+        )
+        .await
+        .unwrap();
+
+        let sale_id = sale.sale_id;
+        let movement_id = cash_out.movement_id;
+        let sale_id_for_update = sale_id.clone();
+        let movement_id_for_update = movement_id.clone();
+        pool.get()
+            .await
+            .unwrap()
+            .interact(move |conn| {
+                conn.execute(
+                    "UPDATE sales SET created_at = '2026-08-03T10:15:00Z' WHERE id = ?1",
+                    [&sale_id_for_update],
+                )?;
+                conn.execute(
+                    "UPDATE movements SET created_at = '2026-08-03T10:30:00Z' WHERE id = ?1",
+                    [&movement_id_for_update],
+                )?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        let history = get_session_history(&pool).await.unwrap();
+
+        assert_eq!(history.operations.len(), 2);
+        assert_eq!(history.operations[0].id, sale_id);
+        assert_eq!(history.operations[0].operation_type, "sale");
+        assert_eq!(history.operations[0].amount, "120.00");
+        assert_eq!(
+            history.operations[0].detail.as_deref(),
+            Some("campera y cuaderno")
+        );
+        assert_eq!(history.operations[0].category.as_deref(), Some("mixto"));
+        assert_eq!(history.operations[0].payments.len(), 2);
+        let transfer = history.operations[0]
+            .payments
+            .iter()
+            .find(|payment| payment.method == "transfer")
+            .unwrap();
+        assert_eq!(transfer.recipient_account.as_deref(), Some("Juan"));
+        assert_eq!(history.transfer_totals.len(), 1);
+        assert_eq!(history.transfer_totals[0].recipient_account, "Juan");
+        assert_eq!(history.transfer_totals[0].amount, "50.00");
+        assert_eq!(history.operations[1].id, movement_id);
+        assert_eq!(history.operations[1].operation_type, "cash_out");
+        assert_eq!(
+            history.operations[1].detail.as_deref(),
+            Some("compra de insumos")
+        );
+        assert_eq!(history.payment_totals.cash, "70.00");
+        assert_eq!(history.payment_totals.transfer, "50.00");
+        assert_eq!(history.payment_totals.debit, "0.00");
+        assert_eq!(history.expected_cash, "150.00");
+        assert_eq!(history.operations[0].occurred_at, "2026-08-03T10:15:00Z");
+        assert_eq!(history.operations[1].occurred_at, "2026-08-03T10:30:00Z");
+    }
+
+    #[tokio::test]
+    async fn session_history_groups_net_transfer_totals_by_account() {
+        let (_dir, pool) = setup_db().await;
+        open_session(&pool, 10000, "key-open").await.unwrap();
+
+        let split_sale = record_sale(
+            &pool,
+            RecordSaleRequest {
+                total_amount: "100.00".to_string(),
+                category: "mixto".to_string(),
+                detail: None,
+                payments: vec![
+                    PaymentPartRequest {
+                        method: "cash".to_string(),
+                        amount: "40.00".to_string(),
+                        recipient_account: None,
+                    },
+                    PaymentPartRequest {
+                        method: "transfer".to_string(),
+                        amount: "30.00".to_string(),
+                        recipient_account: Some("Juan".to_string()),
+                    },
+                    PaymentPartRequest {
+                        method: "transfer".to_string(),
+                        amount: "30.00".to_string(),
+                        recipient_account: Some("Carlos".to_string()),
+                    },
+                ],
+            },
+            "key-sale-split-accounts",
+        )
+        .await
+        .unwrap();
+        record_sale(
+            &pool,
+            RecordSaleRequest {
+                total_amount: "20.00".to_string(),
+                category: "ropa".to_string(),
+                detail: None,
+                payments: vec![PaymentPartRequest {
+                    method: "transfer".to_string(),
+                    amount: "20.00".to_string(),
+                    recipient_account: Some("Carlos".to_string()),
+                }],
+            },
+            "key-sale-carlos",
+        )
+        .await
+        .unwrap();
+
+        let before = get_session_history(&pool).await.unwrap();
+        assert_eq!(before.payment_totals.transfer, "80.00");
+        assert_eq!(before.transfer_totals.len(), 2);
+        assert_eq!(before.transfer_totals[0].recipient_account, "Carlos");
+        assert_eq!(before.transfer_totals[0].amount, "50.00");
+        assert_eq!(before.transfer_totals[1].recipient_account, "Juan");
+        assert_eq!(before.transfer_totals[1].amount, "30.00");
+        assert_eq!(before.expected_cash, "140.00");
+
+        crate::application::sale_use_case::annul_sale(
+            &pool,
+            crate::application::sale_use_case::AnnulSaleRequest {
+                sale_id: split_sale.sale_id,
+                reason: Some("error de carga".to_string()),
+            },
+            "key-annul-split-accounts",
+        )
+        .await
+        .unwrap();
+
+        let after = get_session_history(&pool).await.unwrap();
+        assert_eq!(after.payment_totals.transfer, "20.00");
+        assert_eq!(after.transfer_totals.len(), 1);
+        assert_eq!(after.transfer_totals[0].recipient_account, "Carlos");
+        assert_eq!(after.transfer_totals[0].amount, "20.00");
+        assert_eq!(after.expected_cash, "100.00");
     }
 }

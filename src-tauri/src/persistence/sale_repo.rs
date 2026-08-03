@@ -60,6 +60,38 @@ pub fn insert_cash_out(
     Ok(movement_id)
 }
 
+/// Annul a sale and create one immutable payment reversal per original payment.
+pub fn annul_sale(
+    tx: &mut Transaction<'_>,
+    sale_id: &str,
+    reason: Option<&str>,
+) -> Result<(), AppError> {
+    let payment_parts: Vec<(String, i64)> = {
+        let mut statement = tx.prepare("SELECT id, amount FROM payments WHERE sale_id = ?1")?;
+        let rows = statement
+            .query_map([sale_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+
+    let rows_changed = tx.execute(
+        "UPDATE sales SET status = 'annulled', annulment_reason = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1 AND status = 'confirmed'",
+        rusqlite::params![sale_id, reason],
+    )?;
+    if rows_changed == 0 {
+        return Err(AppError::conflict("sale is no longer confirmed"));
+    }
+
+    for (payment_id, amount) in payment_parts {
+        tx.execute(
+            "INSERT INTO payment_reversals (id, payment_id, amount, annulment_sale_id) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![uuid::Uuid::new_v4().to_string(), payment_id, amount, sale_id],
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Validate that the payment parts sum to the sale total.
 pub fn validate_payment_sum(total_amount: i64, payments: &[PaymentPart]) -> Result<(), AppError> {
     let sum: i64 = payments.iter().map(|p| p.amount).sum();
