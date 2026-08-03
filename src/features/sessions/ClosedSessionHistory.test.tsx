@@ -26,6 +26,7 @@ const summaries = [
     expectedCash: "120.00",
     countedCash: "121.00",
     difference: "1.00",
+    salesTotal: "35.00",
   },
   {
     sessionId: "session-old",
@@ -35,6 +36,7 @@ const summaries = [
     expectedCash: "90.00",
     countedCash: "88.00",
     difference: "-2.00",
+    salesTotal: "15.00",
   },
   {
     sessionId: "session-even",
@@ -44,6 +46,7 @@ const summaries = [
     expectedCash: "50.00",
     countedCash: "50.00",
     difference: "0.00",
+    salesTotal: "0.00",
   },
 ] as const;
 
@@ -116,9 +119,66 @@ describe("ClosedSessionHistory", () => {
     expect(sessionButtons).toHaveLength(3);
     expect(sessionButtons[0]).toHaveTextContent("Sobrante: +$ 1,00");
     expect(sessionButtons[1]).toHaveTextContent("Faltante: -$ 2,00");
-    expect(sessionButtons[2]).toHaveTextContent("Sin diferencia: $ 0,00");
-    expect(sessionButtons[0]).toHaveTextContent("Efectivo esperado");
+    expect(sessionButtons[2]).not.toHaveTextContent("Sin diferencia");
+    expect(sessionButtons[0]).toHaveTextContent(/\d{2}:\d{2} – \d{2}:\d{2}/);
+    expect(sessionButtons[0].querySelectorAll("time")).toHaveLength(2);
+    expect(sessionButtons[0]).toHaveTextContent("Vendido");
+    expect(sessionButtons[0]).toHaveTextContent("$ 35,00");
+    expect(sessionButtons[0]).not.toHaveTextContent("Apertura");
+    expect(sessionButtons[0]).not.toHaveTextContent("Cierre");
+    expect(sessionButtons[0]).not.toHaveTextContent("Efectivo inicial");
+    expect(sessionButtons[0]).not.toHaveTextContent("Efectivo esperado");
+    expect(sessionButtons[0]).not.toHaveTextContent("Efectivo contado");
     expect(mockGetClosedSessionDetail).toHaveBeenCalledWith("session-new");
+  });
+
+  it("groups consecutive sessions by their local closing date", async () => {
+    const groupedSummaries = [
+      {
+        ...summaries[0],
+        openedAt: "2026-08-03T09:00:00",
+        closedAt: "2026-08-03T18:00:00",
+      },
+      {
+        ...summaries[0],
+        sessionId: "session-same-day",
+        openedAt: "2026-08-03T08:00:00",
+        closedAt: "2026-08-03T12:30:00",
+      },
+      {
+        ...summaries[1],
+        openedAt: "2026-08-02T09:00:00",
+        closedAt: "2026-08-02T18:00:00",
+      },
+      {
+        ...summaries[2],
+        openedAt: "2025-12-31T09:00:00",
+        closedAt: "2025-12-31T18:00:00",
+      },
+    ];
+    mockListClosedSessions.mockResolvedValue(groupedSummaries);
+    mockGetClosedSessionDetail.mockResolvedValue(detail);
+
+    render(<ClosedSessionHistory onBack={vi.fn()} />);
+
+    const sessionList = await screen.findByRole("list", {
+      name: "Sesiones cerradas",
+    });
+    const dateHeaders = within(sessionList).getAllByRole("heading", {
+      level: 4,
+    });
+
+    expect(dateHeaders).toHaveLength(3);
+    expect(dateHeaders[0]).toHaveAccessibleName(
+      "Corte de control: 3 ago 2026",
+    );
+    expect(dateHeaders[1]).toHaveAccessibleName(
+      "Corte de control: 2 ago 2026",
+    );
+    expect(dateHeaders[2]).toHaveAccessibleName(
+      "Corte de control: 31 dic 2025",
+    );
+    expect(within(sessionList).getAllByRole("button")).toHaveLength(4);
   });
 
   it("shows read-only detail and retries a failed detail query", async () => {

@@ -113,6 +113,7 @@ pub struct ClosedSessionSummary {
     pub expected_cash: String,
     pub counted_cash: String,
     pub difference: String,
+    pub sales_total: String,
 }
 
 /// Read-only operation history and reconciliation for a closed session.
@@ -126,6 +127,7 @@ pub struct ClosedSessionDetailResponse {
     pub expected_cash: String,
     pub counted_cash: String,
     pub difference: String,
+    pub sales_total: String,
     pub operations: Vec<SessionOperation>,
     pub payment_totals: PaymentTotals,
     pub transfer_totals: Vec<TransferAccountTotal>,
@@ -384,6 +386,7 @@ fn map_history_rows(
 fn closed_session_summary(
     row: cash_session_repo::CashSessionRow,
     expected_cash: i64,
+    sales_total: i64,
 ) -> Result<ClosedSessionSummary, AppError> {
     let counted_cash = row
         .counted_cash
@@ -403,7 +406,17 @@ fn closed_session_summary(
         expected_cash: Money::from_cents(expected_cash).to_string(),
         counted_cash: Money::from_cents(counted_cash).to_string(),
         difference: Money::from_cents(difference).to_string(),
+        sales_total: Money::from_cents(sales_total).to_string(),
     })
+}
+
+/// Sum the net payment totals into the real sales total.
+///
+/// This intentionally excludes opening cash, cash movements, and the cash
+/// reconciliation difference. The repository aggregate already removes
+/// payment reversals for annulled sales according to the history semantics.
+fn net_sales_total(totals: &cash_session_repo::PaymentTotalsRow) -> i64 {
+    totals.cash + totals.transfer + totals.debit + totals.credit + totals.qr
 }
 
 /// Get the chronological operations and current net totals for the open session.
@@ -431,7 +444,9 @@ pub async fn list_closed_sessions(pool: &Pool) -> Result<Vec<ClosedSessionSummar
 
     for row in rows {
         let expected_cash = cash_session_repo::get_expected_cash_for_session(pool, &row.id).await?;
-        summaries.push(closed_session_summary(row, expected_cash)?);
+        let history = cash_session_repo::get_history(pool, &row.id).await?;
+        let sales_total = net_sales_total(&history.payment_totals);
+        summaries.push(closed_session_summary(row, expected_cash, sales_total)?);
     }
 
     Ok(summaries)
@@ -446,8 +461,9 @@ pub async fn get_closed_session_detail(
         .await?
         .ok_or(AppError::NotFound)?;
     let expected_cash = cash_session_repo::get_expected_cash_for_session(pool, &row.id).await?;
-    let summary = closed_session_summary(row, expected_cash)?;
-    let history = cash_session_repo::get_history(pool, &summary.session_id).await?;
+    let history = cash_session_repo::get_history(pool, &row.id).await?;
+    let sales_total = net_sales_total(&history.payment_totals);
+    let summary = closed_session_summary(row, expected_cash, sales_total)?;
     let (operations, payment_totals, transfer_totals) = map_history_rows(history);
 
     Ok(ClosedSessionDetailResponse {
@@ -458,6 +474,7 @@ pub async fn get_closed_session_detail(
         expected_cash: summary.expected_cash,
         counted_cash: summary.counted_cash,
         difference: summary.difference,
+        sales_total: summary.sales_total,
         operations,
         payment_totals,
         transfer_totals,
@@ -1232,7 +1249,101 @@ mod tests {
         assert_eq!(sessions[0].expected_cash, "20.00");
         assert_eq!(sessions[0].counted_cash, "21.00");
         assert_eq!(sessions[0].difference, "1.00");
+        assert_eq!(sessions[0].sales_total, "0.00");
         assert_eq!(sessions[1].session_id, "closed-old");
+    }
+
+    #[tokio::test]
+    async fn closed_session_summary_reports_net_sales_across_payment_methods() {
+        let (_dir, pool) = setup_db().await;
+        let open = open_session(&pool, 10000, "key-sales-total-open")
+            .await
+            .unwrap();
+
+        record_sale(
+            &pool,
+            RecordSaleRequest {
+                total_amount: "150.00".to_string(),
+                category: "mixto".to_string(),
+                detail: None,
+                payments: vec![
+                    PaymentPartRequest {
+                        method: "cash".to_string(),
+                        amount: "10.00".to_string(),
+                        recipient_account: None,
+                    },
+                    PaymentPartRequest {
+                        method: "transfer".to_string(),
+                        amount: "20.00".to_string(),
+                        recipient_account: Some("Juan".to_string()),
+                    },
+                    PaymentPartRequest {
+                        method: "debit".to_string(),
+                        amount: "30.00".to_string(),
+                        recipient_account: None,
+                    },
+                    PaymentPartRequest {
+                        method: "credit".to_string(),
+                        amount: "40.00".to_string(),
+                        recipient_account: None,
+                    },
+                    PaymentPartRequest {
+                        method: "qr".to_string(),
+                        amount: "50.00".to_string(),
+                        recipient_account: None,
+                    },
+                ],
+            },
+            "key-sales-total-confirmed",
+        )
+        .await
+        .unwrap();
+
+        let annulled_sale = record_sale(
+            &pool,
+            RecordSaleRequest {
+                total_amount: "60.00".to_string(),
+                category: "ropa".to_string(),
+                detail: None,
+                payments: vec![PaymentPartRequest {
+                    method: "cash".to_string(),
+                    amount: "60.00".to_string(),
+                    recipient_account: None,
+                }],
+            },
+            "key-sales-total-annulled",
+        )
+        .await
+        .unwrap();
+
+        crate::application::sale_use_case::annul_sale(
+            &pool,
+            crate::application::sale_use_case::AnnulSaleRequest {
+                sale_id: annulled_sale.sale_id,
+                reason: Some("error de carga".to_string()),
+            },
+            "key-sales-total-annulment",
+        )
+        .await
+        .unwrap();
+
+        close_session(&pool, 11000, "key-sales-total-close")
+            .await
+            .unwrap();
+
+        let summaries = list_closed_sessions(&pool).await.unwrap();
+        assert_eq!(summaries[0].sales_total, "150.00");
+        assert_eq!(summaries[0].expected_cash, "110.00");
+
+        let detail = get_closed_session_detail(&pool, &open.session_id)
+            .await
+            .unwrap();
+        assert_eq!(detail.sales_total, "150.00");
+        assert_eq!(detail.payment_totals.cash, "10.00");
+        assert_eq!(detail.payment_totals.transfer, "20.00");
+        assert_eq!(detail.payment_totals.debit, "30.00");
+        assert_eq!(detail.payment_totals.credit, "40.00");
+        assert_eq!(detail.payment_totals.qr, "50.00");
     }
 
     #[tokio::test]
@@ -1318,6 +1429,7 @@ mod tests {
         assert_eq!(detail.expected_cash, "95.00");
         assert_eq!(detail.counted_cash, "95.00");
         assert_eq!(detail.difference, "0.00");
+        assert_eq!(detail.sales_total, "20.00");
         assert_eq!(detail.operations.len(), 3);
 
         let annulled = detail

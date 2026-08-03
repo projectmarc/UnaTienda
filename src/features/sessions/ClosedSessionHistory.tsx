@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   getClosedSessionDetail,
@@ -6,17 +6,9 @@ import {
   type ClosedSessionDetail,
   type ClosedSessionSummary,
 } from "../../shared/tauri/commands";
-import { formatDateTime } from "../../shared/dateTime";
+import { formatDate, formatDateTime, formatTime } from "../../shared/dateTime";
+import { formatMoney } from "../../shared/formatting";
 import SessionHistory from "./SessionHistory";
-
-function formatMoney(value: string): string {
-  const negative = value.startsWith("-");
-  const unsigned = negative ? value.slice(1) : value;
-  const [whole, decimals = "00"] = unsigned.split(".");
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-
-  return `${negative ? "-" : ""}$ ${grouped},${decimals.padEnd(2, "0")}`;
-}
 
 function differenceDetails(value: string): {
   label: string;
@@ -46,7 +38,9 @@ function differenceDetails(value: string): {
   };
 }
 
-function Difference({ value }: { value: string }) {
+function Difference({ value, hideZero = false }: { value: string; hideZero?: boolean }) {
+  if (hideZero && value === "0.00") return null;
+
   const details = differenceDetails(value);
 
   return (
@@ -57,12 +51,12 @@ function Difference({ value }: { value: string }) {
 }
 
 interface ClosedSessionHistoryProps {
-  onBack: () => void;
+  onBack?: () => void;
 }
 
-export default function ClosedSessionHistory({
-  onBack,
-}: ClosedSessionHistoryProps) {
+export default function ClosedSessionHistory(
+  _props?: ClosedSessionHistoryProps,
+) {
   const [sessions, setSessions] = useState<ClosedSessionSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ClosedSessionDetail | null>(null);
@@ -129,8 +123,8 @@ export default function ClosedSessionHistory({
   }, [detailReloadToken, selectedId]);
 
   return (
-    <section aria-labelledby="closed-history-title" className="py-8">
-      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-5">
+    <section aria-labelledby="closed-history-title" className="py-6 sm:py-8">
+      <header className="border-b border-border pb-4">
         <div>
           <p className="text-xs font-semibold tracking-[0.16em] text-primary uppercase">
             Consulta de caja
@@ -146,9 +140,6 @@ export default function ClosedSessionHistory({
             solo lectura.
           </p>
         </div>
-        <Button onClick={onBack} type="button" variant="outline">
-          Volver a la operación
-        </Button>
       </header>
 
       {loading && (
@@ -182,7 +173,7 @@ export default function ClosedSessionHistory({
       )}
 
       {!loading && !error && sessions.length > 0 && (
-        <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.6fr)]">
+        <div className="mt-6 grid min-h-0 gap-5 lg:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.6fr)]">
           <aside aria-labelledby="closed-sessions-list-title">
             <div className="flex items-baseline justify-between gap-3 border-b border-border pb-3">
               <div>
@@ -203,89 +194,79 @@ export default function ClosedSessionHistory({
 
             <ol
               aria-label="Sesiones cerradas"
-              className="mt-4 space-y-3 lg:max-h-[calc(100dvh-20rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-2"
+              className="mt-4 flex max-h-[calc(100dvh-15rem)] flex-col gap-3 overflow-y-auto overscroll-contain pr-2"
             >
-              {sessions.map((session) => (
-                <li key={session.sessionId}>
-                  <button
-                    aria-controls="closed-session-detail"
-                    aria-current={
-                      selectedId === session.sessionId ? "true" : undefined
-                    }
-                    className={`w-full rounded-sm border p-4 text-left transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
-                      selectedId === session.sessionId
-                        ? "border-border-strong bg-card"
-                        : "border-border bg-secondary hover:border-border-strong hover:bg-card"
-                    }`}
-                    onClick={() => setSelectedId(session.sessionId)}
-                    type="button"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <time
-                        className="font-mono text-xs tabular-nums text-foreground-tertiary"
-                        dateTime={session.closedAt}
+              {sessions.map((session, index) => {
+                const closedDate = formatDate(session.closedAt);
+                const previousClosedDate =
+                  index > 0 ? formatDate(sessions[index - 1].closedAt) : null;
+                const startsNewDate = closedDate !== previousClosedDate;
+
+                return (
+                  <Fragment key={session.sessionId}>
+                    {startsNewDate && (
+                      <li className="pt-2 first:pt-0" role="presentation">
+                        <div className="flex items-center gap-3 border-y border-border-subtle py-2">
+                          <span
+                            aria-hidden="true"
+                            className="h-px flex-1 bg-border-subtle"
+                          />
+                          <h4 className="shrink-0 text-xs font-semibold tracking-[0.12em] text-foreground-tertiary uppercase">
+                            <span className="sr-only">Corte de control: </span>
+                            <time dateTime={session.closedAt}>{closedDate}</time>
+                          </h4>
+                          <span
+                            aria-hidden="true"
+                            className="h-px flex-1 bg-border-subtle"
+                          />
+                        </div>
+                      </li>
+                    )}
+                    <li>
+                      <button
+                        aria-controls="closed-session-detail"
+                        aria-current={
+                          selectedId === session.sessionId ? "true" : undefined
+                        }
+                        className={`w-full rounded-sm border p-4 text-left transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
+                          selectedId === session.sessionId
+                            ? "border-border-strong bg-card"
+                            : "border-border bg-secondary hover:border-border-strong hover:bg-card"
+                        }`}
+                        onClick={() => setSelectedId(session.sessionId)}
+                        type="button"
                       >
-                        {formatDateTime(session.closedAt)}
-                      </time>
-                      <Difference value={session.difference} />
-                    </div>
-                    <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 text-xs">
-                      <div>
-                        <dt className="text-foreground-tertiary">Apertura</dt>
-                        <dd className="mt-1 text-foreground-secondary">
-                          <time dateTime={session.openedAt}>
-                            {formatDateTime(session.openedAt)}
-                          </time>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-foreground-tertiary">Cierre</dt>
-                        <dd className="mt-1 text-foreground-secondary">
-                          <time dateTime={session.closedAt}>
-                            {formatDateTime(session.closedAt)}
-                          </time>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-foreground-tertiary">
-                          Efectivo inicial
-                        </dt>
-                        <dd className="money mt-1">
-                          {formatMoney(session.openingAmount)}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-foreground-tertiary">
-                          Efectivo esperado
-                        </dt>
-                        <dd className="money mt-1">
-                          {formatMoney(session.expectedCash)}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-foreground-tertiary">
-                          Efectivo contado
-                        </dt>
-                        <dd className="money mt-1">
-                          {formatMoney(session.countedCash)}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-foreground-tertiary">Diferencia</dt>
-                        <dd className="mt-1">
-                          <Difference value={session.difference} />
-                        </dd>
-                      </div>
-                    </dl>
-                  </button>
-                </li>
-              ))}
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="font-mono text-sm font-medium tabular-nums text-foreground-secondary">
+                            <time dateTime={session.openedAt}>
+                              {formatTime(session.openedAt)}
+                            </time>
+                            <span aria-hidden="true"> – </span>
+                            <time dateTime={session.closedAt}>
+                              {formatTime(session.closedAt)}
+                            </time>
+                          </span>
+                          <Difference hideZero value={session.difference} />
+                        </div>
+                        <div className="mt-1 flex items-baseline justify-between gap-3">
+                          <span className="text-sm text-foreground-secondary">
+                            Vendido
+                          </span>
+                          <span className="money text-lg font-semibold tabular-nums">
+                            {formatMoney(session.salesTotal)}
+                          </span>
+                        </div>
+                      </button>
+                    </li>
+                  </Fragment>
+                );
+              })}
             </ol>
           </aside>
 
           <div
             aria-live="polite"
-            className="min-w-0 overscroll-contain lg:max-h-[calc(100dvh-14rem)] lg:overflow-y-auto lg:pr-2"
+            className="min-w-0 overscroll-contain lg:max-h-[calc(100dvh-13rem)] lg:overflow-y-auto lg:pr-2"
             id="closed-session-detail"
           >
             {detailLoading && (

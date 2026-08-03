@@ -2,40 +2,18 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   recordSale,
+  type PaymentPartRequest,
   type PaymentMethod,
   type SaleCategory,
-  type PaymentPartRequest,
 } from "../../shared/tauri/commands";
-
-function generateIdempotencyKey(): string {
-  return crypto.randomUUID();
-}
-
-const CATEGORIES: { value: SaleCategory; label: string }[] = [
-  { value: "ropa", label: "Ropa" },
-  { value: "libreria", label: "Librería" },
-  { value: "mixto", label: "Mixto" },
-];
-
-const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
-  { value: "cash", label: "Efectivo" },
-  { value: "transfer", label: "Transferencia" },
-  { value: "debit", label: "Débito" },
-  { value: "credit", label: "Crédito" },
-  { value: "qr", label: "QR" },
-];
-
-const RECIPIENT_ACCOUNTS = ["Juan", "Carlos"];
-
-function paymentMethodLabel(method: PaymentMethod): string {
-  return (
-    PAYMENT_METHODS.find((paymentMethod) => paymentMethod.value === method)
-      ?.label ?? method
-  );
-}
-
-const inputClassName =
-  "h-12 w-full rounded-sm border border-input bg-muted px-3 font-mono text-lg tabular-nums outline-none transition-colors duration-150 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
+import { generateIdempotencyKey } from "../../shared/formatting";
+import { inputClassName } from "../../shared/ui";
+import {
+  PAYMENT_METHODS,
+  RECIPIENT_ACCOUNTS,
+  SALE_CATEGORIES,
+  paymentMethodLabel,
+} from "./constants";
 
 interface SaleFormProps {
   onRecorded: () => void;
@@ -197,7 +175,7 @@ export default function SaleForm({ onRecorded }: SaleFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
       <h3 className="text-lg font-semibold">Registrar venta</h3>
 
       {/* Total amount */}
@@ -226,7 +204,7 @@ export default function SaleForm({ onRecorded }: SaleFormProps) {
       <div>
         <p className="text-sm font-semibold">Rubro</p>
         <div className="mt-2 flex gap-2">
-          {CATEGORIES.map((cat) => (
+          {SALE_CATEGORIES.map((cat) => (
             <Button
               key={cat.value}
               disabled={saving}
@@ -283,29 +261,27 @@ export default function SaleForm({ onRecorded }: SaleFormProps) {
 
       {/* Additional payments section */}
       {(showAddForm || additionalPayments.length > 0) && (
-        <div className="space-y-3">
+        <div className="flex flex-col gap-3">
           <p className="text-sm font-semibold">Pagos adicionales</p>
 
           {/* List of additional payment parts */}
           {additionalPayments.length > 0 && (
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               {additionalPayments.map((part, index) => (
                 <div
                   key={index}
                   className="flex items-center justify-between rounded-sm border border-border p-3"
                 >
                   <span className="text-sm">
-                    {
-                      PAYMENT_METHODS.find((m) => m.value === part.method)
-                        ?.label
-                    }{" "}
-                    ${part.amount}
+                    {paymentMethodLabel(part.method)} ${part.amount}
                     {part.recipientAccount && ` → ${part.recipientAccount}`}
                   </span>
                   <Button
+                    aria-label={`Quitar pago adicional ${paymentMethodLabel(part.method)} de $${part.amount}${part.recipientAccount ? ` para ${part.recipientAccount}` : ""}`}
+                    className="size-11 shrink-0"
                     disabled={saving}
                     onClick={() => removeAdditionalPayment(index)}
-                    size="icon-xs"
+                    size="icon"
                     type="button"
                     variant="ghost"
                   >
@@ -402,7 +378,7 @@ export default function SaleForm({ onRecorded }: SaleFormProps) {
         <section
           aria-labelledby="split-payment-summary-title"
           aria-live="polite"
-          className="space-y-3 rounded-sm border border-border bg-muted/30 p-3"
+          className="flex flex-col gap-3 rounded-sm border border-border bg-muted/30 p-3"
         >
           <div className="flex items-baseline justify-between gap-4">
             <h4
@@ -417,7 +393,7 @@ export default function SaleForm({ onRecorded }: SaleFormProps) {
           </div>
           <p className="text-xs text-foreground-secondary">Total de la venta</p>
 
-          <div className="space-y-2 border-t border-border-subtle pt-3">
+          <div className="flex flex-col gap-2 border-t border-border-subtle pt-3">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-sm font-semibold">Pago principal</p>
@@ -473,7 +449,7 @@ export default function SaleForm({ onRecorded }: SaleFormProps) {
             )}
           </div>
 
-          <div className="space-y-1 border-t border-border-subtle pt-3">
+          <div className="flex flex-col gap-1 border-t border-border-subtle pt-3">
             <div className="flex items-baseline justify-between gap-4 text-sm font-semibold">
               <span>Total asignado</span>
               <span className="font-mono tabular-nums">

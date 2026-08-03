@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDateTime, formatTime } from "./dateTime";
+import { formatDate, formatDateTime, formatTime } from "./dateTime";
 
 describe("date and time formatting", () => {
   it("formats morning and afternoon times in 24-hour notation", () => {
@@ -18,5 +18,9 @@ describe("date and time formatting", () => {
     expect(formatDateTime("2026-08-03T17:45:00")).toBe(
       "3 de ago de 2026, 17:45",
     );
+  });
+
+  it("formats the local date without repeating the time", () => {
+    expect(formatDate("2026-08-03T17:45:00")).toBe("3 ago 2026");
   });
 });

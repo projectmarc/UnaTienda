@@ -108,6 +108,7 @@ export interface ClosedSessionSummary {
   expectedCash: string;
   countedCash: string;
   difference: string;
+  salesTotal: string;
 }
 
 export interface ClosedSessionDetail extends ClosedSessionSummary {
