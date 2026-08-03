@@ -8,7 +8,7 @@ use crate::domain::error::AppError;
 
 use std::collections::HashSet;
 
-const MIGRATIONS: [(i64, &str); 4] = [
+const MIGRATIONS: [(i64, &str); 5] = [
     (1, include_str!("../../migrations/001_initial.sql")),
     (
         2,
@@ -21,6 +21,10 @@ const MIGRATIONS: [(i64, &str); 4] = [
     (
         4,
         include_str!("../../migrations/004_upgrade_closed_session_reassignment_guards.sql"),
+    ),
+    (
+        5,
+        include_str!("../../migrations/005_add_sale_category_payment_qr.sql"),
     ),
 ];
 
@@ -212,6 +216,11 @@ pub async fn run_migrations(pool: &Pool, db_path: &Path) -> Result<(), DbError> 
             }
         }
 
+        // Temporarily disable foreign keys for migrations that rebuild tables.
+        // PRAGMA foreign_keys is a session-level setting that takes effect
+        // immediately on the connection, even inside an open transaction.
+        conn.execute_batch("PRAGMA foreign_keys = OFF")?;
+
         let pending_set: HashSet<i64> = pending_versions.iter().copied().collect();
         for (version, sql) in MIGRATIONS.iter() {
             if pending_set.contains(version) {
@@ -220,6 +229,9 @@ pub async fn run_migrations(pool: &Pool, db_path: &Path) -> Result<(), DbError> 
                 tx.commit()?;
             }
         }
+
+        // Re-enable foreign keys after all migrations are applied.
+        conn.execute_batch("PRAGMA foreign_keys = ON")?;
 
         if !pending_versions.is_empty() {
             enforce_snapshot_retention(&db_path_buf, SNAPSHOT_RETENTION_LIMIT)?;
@@ -322,7 +334,7 @@ mod tests {
             assert!(tables.contains(&"schema_migrations".to_string()));
             assert!(tables.contains(&"backup_runs".to_string()));
 
-            for version in [1, 2, 3, 4] {
+            for version in [1, 2, 3, 4, 5] {
                 let migrations: i64 = conn
                     .query_row(
                         "SELECT count(*) FROM schema_migrations WHERE version = ?1",

@@ -201,6 +201,8 @@ pub fn run() {
             commands::cash_session_commands::open_session,
             commands::cash_session_commands::close_session,
             commands::cash_session_commands::get_reconciliation,
+            commands::sale_commands::record_sale,
+            commands::sale_commands::record_cash_out,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|error| eprintln!("UnaTienda runtime terminated: {error}"));
