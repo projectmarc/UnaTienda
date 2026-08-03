@@ -1,4 +1,5 @@
 use deadpool_sqlite::Pool;
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::error::AppError;
@@ -40,6 +41,22 @@ pub struct SaleRecordedResponse {
 pub struct CashOutRecordedResponse {
     pub movement_id: String,
     pub amount: String,
+}
+
+/// Request to annul a confirmed sale.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnulSaleRequest {
+    pub sale_id: String,
+    pub reason: Option<String>,
+}
+
+/// Response returned after annulling a sale.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleAnnulledResponse {
+    pub sale_id: String,
+    pub status: String,
 }
 
 /// Record a sale in the current open session.
@@ -182,6 +199,67 @@ pub async fn record_cash_out(
             Ok(CashOutRecordedResponse {
                 movement_id,
                 amount: money.to_string(),
+            })
+        },
+    )
+    .await
+}
+
+/// Annul a sale while its owning cash session remains open.
+///
+/// The sale row is retained and marked annulled. Each original payment gets an
+/// immutable reversal in the same transaction, so the expected cash and net
+/// payment totals immediately reflect the annulment.
+pub async fn annul_sale(
+    pool: &Pool,
+    request: AnnulSaleRequest,
+    idempotency_key: &str,
+) -> Result<SaleAnnulledResponse, AppError> {
+    if request.sale_id.trim().is_empty() {
+        return Err(AppError::validation_field("sale id is required", "sale_id"));
+    }
+
+    let sale_id = request.sale_id;
+    let reason = request.reason.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        (!trimmed.is_empty()).then_some(trimmed)
+    });
+    let request_hash = format!(
+        "annul_sale:{}:{}",
+        sale_id,
+        reason.as_deref().unwrap_or_default()
+    );
+
+    with_idempotency(
+        pool,
+        idempotency_key,
+        "annul_sale",
+        &request_hash,
+        move |tx| {
+            let state: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT cs.status, s.status FROM sales s JOIN cash_sessions cs ON cs.id = s.session_id WHERE s.id = ?1",
+                    [&sale_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let (session_status, sale_status) = state.ok_or(AppError::NotFound)?;
+
+            if session_status != "open" {
+                return Err(AppError::SessionClosed);
+            }
+            if sale_status == "annulled" {
+                return Err(AppError::conflict("sale is already annulled"));
+            }
+            if sale_status != "confirmed" {
+                return Err(AppError::conflict("sale cannot be annulled"));
+            }
+
+            sale_repo::annul_sale(tx, &sale_id, reason.as_deref())?;
+
+            Ok(SaleAnnulledResponse {
+                sale_id,
+                status: "annulled".to_string(),
             })
         },
     )
@@ -496,14 +574,9 @@ mod tests {
     async fn record_cash_out_rejects_when_no_session_open() {
         let (_dir, pool) = setup_db().await;
 
-        let err = record_cash_out(
-            &pool,
-            "10.00".to_string(),
-            None,
-            "key-co-no-session",
-        )
-        .await
-        .unwrap_err();
+        let err = record_cash_out(&pool, "10.00".to_string(), None, "key-co-no-session")
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, AppError::NoOpenSession));
     }
@@ -527,9 +600,14 @@ mod tests {
 
         open_session(&pool, 10000, "key-open").await.unwrap();
 
-        record_cash_out(&pool, "20.00".to_string(), Some("cambio".to_string()), "key-co-1")
-            .await
-            .unwrap();
+        record_cash_out(
+            &pool,
+            "20.00".to_string(),
+            Some("cambio".to_string()),
+            "key-co-1",
+        )
+        .await
+        .unwrap();
 
         let view = crate::application::cash_session_use_case::get_reconciliation(&pool, None)
             .await
@@ -647,5 +725,209 @@ mod tests {
         .unwrap();
 
         assert_eq!(resp.total_amount, "75.00");
+    }
+
+    #[tokio::test]
+    async fn annul_sale_marks_sale_and_reverses_each_payment() {
+        let (_dir, pool) = setup_db().await;
+        open_session(&pool, 10000, "key-open").await.unwrap();
+
+        let sale = record_sale(
+            &pool,
+            RecordSaleRequest {
+                total_amount: "100.00".to_string(),
+                category: "ropa".to_string(),
+                detail: Some("campera".to_string()),
+                payments: vec![
+                    PaymentPartRequest {
+                        method: "cash".to_string(),
+                        amount: "60.00".to_string(),
+                        recipient_account: None,
+                    },
+                    PaymentPartRequest {
+                        method: "debit".to_string(),
+                        amount: "40.00".to_string(),
+                        recipient_account: None,
+                    },
+                ],
+            },
+            "key-sale-annul",
+        )
+        .await
+        .unwrap();
+
+        let response = annul_sale(
+            &pool,
+            AnnulSaleRequest {
+                sale_id: sale.sale_id.clone(),
+                reason: Some("error de carga".to_string()),
+            },
+            "key-annul",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.sale_id, sale.sale_id);
+        assert_eq!(response.status, "annulled");
+
+        let history = crate::application::cash_session_use_case::get_session_history(&pool)
+            .await
+            .unwrap();
+        assert_eq!(history.operations[0].status.as_deref(), Some("annulled"));
+        assert_eq!(
+            history.operations[0].annulment_reason.as_deref(),
+            Some("error de carga")
+        );
+        assert_eq!(history.payment_totals.cash, "0.00");
+        assert_eq!(history.payment_totals.debit, "0.00");
+        assert_eq!(history.expected_cash, "100.00");
+
+        let reversal_count: i64 = pool
+            .get()
+            .await
+            .unwrap()
+            .interact(move |conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM payment_reversals WHERE annulment_sale_id = ?1",
+                    [&sale.sale_id],
+                    |row| row.get(0),
+                )
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reversal_count, 2);
+    }
+
+    #[tokio::test]
+    async fn annul_sale_rejects_repeated_annulment() {
+        let (_dir, pool) = setup_db().await;
+        open_session(&pool, 10000, "key-open").await.unwrap();
+        let sale = record_sale(
+            &pool,
+            RecordSaleRequest {
+                total_amount: "25.00".to_string(),
+                category: "libreria".to_string(),
+                detail: None,
+                payments: vec![PaymentPartRequest {
+                    method: "cash".to_string(),
+                    amount: "25.00".to_string(),
+                    recipient_account: None,
+                }],
+            },
+            "key-sale-repeat",
+        )
+        .await
+        .unwrap();
+
+        annul_sale(
+            &pool,
+            AnnulSaleRequest {
+                sale_id: sale.sale_id.clone(),
+                reason: None,
+            },
+            "key-annul-first",
+        )
+        .await
+        .unwrap();
+
+        let err = annul_sale(
+            &pool,
+            AnnulSaleRequest {
+                sale_id: sale.sale_id,
+                reason: None,
+            },
+            "key-annul-second",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, AppError::Conflict { .. }));
+    }
+
+    #[tokio::test]
+    async fn annul_sale_rejects_when_owning_session_is_closed() {
+        let (_dir, pool) = setup_db().await;
+        open_session(&pool, 10000, "key-open").await.unwrap();
+        let sale = record_sale(
+            &pool,
+            RecordSaleRequest {
+                total_amount: "25.00".to_string(),
+                category: "ropa".to_string(),
+                detail: None,
+                payments: vec![PaymentPartRequest {
+                    method: "cash".to_string(),
+                    amount: "25.00".to_string(),
+                    recipient_account: None,
+                }],
+            },
+            "key-sale-closed",
+        )
+        .await
+        .unwrap();
+        crate::application::cash_session_use_case::close_session(&pool, 12500, "key-close")
+            .await
+            .unwrap();
+
+        let err = annul_sale(
+            &pool,
+            AnnulSaleRequest {
+                sale_id: sale.sale_id,
+                reason: Some("too late".to_string()),
+            },
+            "key-annul-closed",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, AppError::SessionClosed));
+    }
+
+    #[tokio::test]
+    async fn annul_sale_adjusts_expected_cash_for_split_payment() {
+        let (_dir, pool) = setup_db().await;
+        open_session(&pool, 10000, "key-open").await.unwrap();
+        let sale = record_sale(
+            &pool,
+            RecordSaleRequest {
+                total_amount: "100.00".to_string(),
+                category: "mixto".to_string(),
+                detail: None,
+                payments: vec![
+                    PaymentPartRequest {
+                        method: "cash".to_string(),
+                        amount: "60.00".to_string(),
+                        recipient_account: None,
+                    },
+                    PaymentPartRequest {
+                        method: "debit".to_string(),
+                        amount: "40.00".to_string(),
+                        recipient_account: None,
+                    },
+                ],
+            },
+            "key-sale-split-annul",
+        )
+        .await
+        .unwrap();
+
+        let before = crate::application::cash_session_use_case::get_reconciliation(&pool, None)
+            .await
+            .unwrap();
+        assert_eq!(before.expected_cash, "160.00");
+
+        annul_sale(
+            &pool,
+            AnnulSaleRequest {
+                sale_id: sale.sale_id,
+                reason: None,
+            },
+            "key-annul-split",
+        )
+        .await
+        .unwrap();
+
+        let after = crate::application::cash_session_use_case::get_reconciliation(&pool, None)
+            .await
+            .unwrap();
+        assert_eq!(after.expected_cash, "100.00");
     }
 }
