@@ -5,16 +5,21 @@ use std::sync::Arc;
 
 use tauri::{Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tokio::sync::{Mutex, RwLock};
 
+use crate::backup::{BackupManager, PendingRestore};
 use crate::persistence::connection::{open_pool, run_migrations, AppDb};
 
 mod application;
+mod backup;
 mod commands;
 mod domain;
 mod persistence;
 
 pub struct AppState {
-    pub db: Arc<AppDb>,
+    pub db: Arc<RwLock<AppDb>>,
+    pub backup: Arc<BackupManager>,
+    pub pending_restore: Arc<Mutex<Option<PendingRestore>>>,
 }
 
 const STARTUP_ERROR_TITLE: &str = "UnaTienda could not start";
@@ -153,17 +158,38 @@ fn database_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, StartupError>
 /// setup hook via `tauri::async_runtime::block_on`, which is Tauri's supported
 /// mechanism for async initialization. It never uses `Handle::current().block_on`.
 pub async fn initialize_app(db_path: &Path) -> Result<AppState, persistence::connection::DbError> {
+    let backup = Arc::new(BackupManager::new(db_path));
+    backup.recover_interrupted_restore().map_err(|error| {
+        persistence::connection::DbError::Io(std::io::Error::other(error.to_string()))
+    })?;
     let pool = open_pool(db_path).await?;
     run_migrations(&pool, db_path).await?;
-    Ok(AppState {
-        db: Arc::new(AppDb::new(pool)),
-    })
+    let state = AppState {
+        db: Arc::new(RwLock::new(AppDb::new(pool))),
+        backup,
+        pending_restore: Arc::new(Mutex::new(None)),
+    };
+    let db = state.db.read().await;
+    let pool = db
+        .pool()
+        .map_err(|error| persistence::connection::DbError::Unavailable(error.to_string()))?;
+    if let Err(error) = state
+        .backup
+        .run_startup_backup(pool, chrono::Utc::now())
+        .await
+    {
+        eprintln!("UnaTienda startup backup failed: {error}");
+    }
+    drop(db);
+    Ok(state)
 }
 
 #[tauri::command]
 async fn health(state: State<'_, AppState>) -> Result<String, String> {
     state
         .db
+        .read()
+        .await
         .health_check()
         .await
         .map(|_| "ok".to_string())
@@ -207,6 +233,10 @@ pub fn run() {
             commands::sale_commands::record_sale,
             commands::sale_commands::record_cash_out,
             commands::sale_commands::annul_sale,
+            commands::backup_commands::get_backup_panel,
+            commands::backup_commands::export_backup,
+            commands::backup_commands::select_backup,
+            commands::backup_commands::restore_backup,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|error| eprintln!("UnaTienda runtime terminated: {error}"));
@@ -225,7 +255,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("test.db");
         let state = initialize_app(&db_path).await.unwrap();
-        state.db.health_check().await.unwrap();
+        state.db.read().await.health_check().await.unwrap();
     }
 
     #[test]

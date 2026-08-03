@@ -1,15 +1,18 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import BackupPanel from "@/features/backups/BackupPanel";
 import ClosedSessionHistory from "@/features/sessions/ClosedSessionHistory";
 import SessionView from "@/features/sessions/SessionView";
 
 function App() {
-  const [view, setView] = useState<"session" | "history">("session");
+  const [view, setView] = useState<"session" | "history" | "backups">(
+    "session",
+  );
 
   return (
     <main className="min-h-screen px-5 py-6 sm:px-10 sm:py-8">
       <div className="mx-auto max-w-4xl">
-        <header className="flex items-end justify-between gap-6 border-b border-border pb-5">
+        <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-5">
           <div>
             <p className="text-xs font-semibold tracking-[0.16em] text-foreground-tertiary uppercase">
               Punto de venta local
@@ -18,11 +21,21 @@ function App() {
               UnaTienda
             </h1>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
             <p className="hidden text-sm text-foreground-tertiary sm:block">
               Operación local · Sin conexión requerida
             </p>
-            {view === "session" && (
+            {view !== "session" && (
+              <Button
+                onClick={() => setView("session")}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                Operación
+              </Button>
+            )}
+            {view !== "history" && (
               <Button
                 onClick={() => setView("history")}
                 size="sm"
@@ -30,6 +43,16 @@ function App() {
                 variant="outline"
               >
                 Historial de cajas
+              </Button>
+            )}
+            {view !== "backups" && (
+              <Button
+                onClick={() => setView("backups")}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                Copias de seguridad
               </Button>
             )}
           </div>
@@ -46,7 +69,7 @@ function App() {
               <li className="text-right">Cierre</li>
             </ol>
           </nav>
-        ) : (
+        ) : view === "history" ? (
           <nav
             aria-label="Ubicación actual"
             className="border-b border-border-subtle py-4"
@@ -55,14 +78,24 @@ function App() {
               Historial de cajas
             </p>
           </nav>
+        ) : (
+          <nav
+            aria-label="Ubicación actual"
+            className="border-b border-border-subtle py-4"
+          >
+            <p className="text-xs font-semibold tracking-[0.16em] text-primary uppercase">
+              Copias de seguridad
+            </p>
+          </nav>
         )}
 
-        <div aria-hidden={view === "history"} hidden={view === "history"}>
+        <div aria-hidden={view !== "session"} hidden={view !== "session"}>
           <SessionView />
         </div>
         {view === "history" && (
           <ClosedSessionHistory onBack={() => setView("session")} />
         )}
+        {view === "backups" && <BackupPanel />}
       </div>
     </main>
   );

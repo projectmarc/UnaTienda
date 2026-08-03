@@ -13,6 +13,7 @@ export interface ClosedSessionResponse {
   expectedCash: string;
   countedCash: string;
   difference: string;
+  backupWarning?: string;
 }
 
 export interface ReconciliationView {
@@ -193,4 +194,60 @@ export async function annulSale(
     request,
     idempotencyKey,
   });
+}
+
+// --- Backup and Restore Types ---
+
+export type BackupKind =
+  "automatic" | "daily" | "session_close" | "pre_restore" | "manual_export";
+
+export interface BackupSummary {
+  backupTimestamp: string;
+  fileName: string;
+  schemaVersion: number;
+  sessionCount: number;
+  saleCount: number;
+  movementCount: number;
+  returnCount: number;
+}
+
+export interface BackupStatus {
+  id: string;
+  runAt: string;
+  kind: BackupKind;
+  success: boolean;
+  available: boolean;
+  fileName: string;
+  sizeBytes?: number;
+  error?: string;
+}
+
+export interface BackupPanelResponse {
+  lastSuccessful?: BackupStatus;
+  backups: BackupStatus[];
+}
+
+export interface RestoreSelection {
+  summary: BackupSummary;
+}
+
+export interface RestoreResult {
+  summary: BackupSummary;
+  restartRequired: boolean;
+}
+
+export async function getBackupPanel(): Promise<BackupPanelResponse> {
+  return invoke<BackupPanelResponse>("get_backup_panel");
+}
+
+export async function exportBackup(): Promise<BackupSummary | null> {
+  return invoke<BackupSummary | null>("export_backup");
+}
+
+export async function selectBackup(): Promise<RestoreSelection | null> {
+  return invoke<RestoreSelection | null>("select_backup");
+}
+
+export async function restoreBackup(): Promise<RestoreResult> {
+  return invoke<RestoreResult>("restore_backup");
 }

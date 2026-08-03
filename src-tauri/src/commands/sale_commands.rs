@@ -17,7 +17,9 @@ pub async fn record_sale(
     request: RecordSaleRequest,
     idempotency_key: String,
 ) -> Result<SaleRecordedResponse, String> {
-    sale_use_case::record_sale(&state.db.pool(), request, &idempotency_key)
+    let db = state.db.read().await;
+    let pool = super::usable_pool(&db)?;
+    sale_use_case::record_sale(pool, request, &idempotency_key)
         .await
         .map_err(|e| {
             serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
@@ -36,7 +38,9 @@ pub async fn record_cash_out(
     detail: Option<String>,
     idempotency_key: String,
 ) -> Result<CashOutRecordedResponse, String> {
-    sale_use_case::record_cash_out(&state.db.pool(), amount, detail, &idempotency_key)
+    let db = state.db.read().await;
+    let pool = super::usable_pool(&db)?;
+    sale_use_case::record_cash_out(pool, amount, detail, &idempotency_key)
         .await
         .map_err(|e| {
             serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
@@ -51,7 +55,9 @@ pub async fn annul_sale(
     request: AnnulSaleRequest,
     idempotency_key: String,
 ) -> Result<SaleAnnulledResponse, String> {
-    sale_use_case::annul_sale(&state.db.pool(), request, &idempotency_key)
+    let db = state.db.read().await;
+    let pool = super::usable_pool(&db)?;
+    sale_use_case::annul_sale(pool, request, &idempotency_key)
         .await
         .map_err(|e| {
             serde_json::to_string(&crate::domain::ErrorResponse::from(&e))

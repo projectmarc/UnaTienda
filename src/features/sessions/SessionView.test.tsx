@@ -156,6 +156,8 @@ describe("SessionView", () => {
       ...openReconciliation,
       countedCash: "105.00",
       difference: "5.00",
+      backupWarning:
+        "La caja se cerró correctamente, pero no se pudo crear la copia de seguridad.",
     });
 
     render(<SessionView />);
@@ -179,6 +181,9 @@ describe("SessionView", () => {
     expect(
       await screen.findByRole("heading", { name: "Caja cerrada" }),
     ).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "La caja permanece cerrada",
+    );
     expect(mockCloseSession).toHaveBeenCalledWith("105.00", expect.any(String));
 
     await user.click(
