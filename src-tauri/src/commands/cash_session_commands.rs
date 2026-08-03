@@ -20,7 +20,9 @@ pub async fn open_session(
         .parse::<crate::domain::Money>()
         .map_err(|e| e.to_string())?;
 
-    cash_session_use_case::open_session(&state.db.pool(), amount.cents(), &idempotency_key)
+    let db = state.db.read().await;
+    let pool = super::usable_pool(&db)?;
+    cash_session_use_case::open_session(pool, amount.cents(), &idempotency_key)
         .await
         .map_err(|e| {
             serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
@@ -42,12 +44,28 @@ pub async fn close_session(
         .parse::<crate::domain::Money>()
         .map_err(|e| e.to_string())?;
 
-    cash_session_use_case::close_session(&state.db.pool(), cash.cents(), &idempotency_key)
-        .await
-        .map_err(|e| {
-            serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
-                .unwrap_or_else(|_| e.to_string())
-        })
+    let db = state.db.read().await;
+    let pool = super::usable_pool(&db)?;
+    let result = cash_session_use_case::close_session(pool, cash.cents(), &idempotency_key).await;
+    if result.is_ok() {
+        let mut response = result.unwrap();
+        if let Err(error) = state
+            .backup
+            .create_session_close_backup(pool, chrono::Utc::now())
+            .await
+        {
+            eprintln!("UnaTienda post-close backup failed: {error}");
+            response.backup_warning = Some(
+                "La caja se cerró correctamente, pero no se pudo crear la copia de seguridad."
+                    .to_string(),
+            );
+        }
+        return Ok(response);
+    }
+    result.map_err(|e| {
+        serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
+            .unwrap_or_else(|_| e.to_string())
+    })
 }
 
 /// Get the reconciliation view for the current open session.
@@ -61,7 +79,9 @@ pub async fn get_reconciliation(
     state: State<'_, AppState>,
     counted_cash: Option<String>,
 ) -> Result<ReconciliationView, String> {
-    cash_session_use_case::get_reconciliation(&state.db.pool(), counted_cash.as_deref())
+    let db = state.db.read().await;
+    let pool = super::usable_pool(&db)?;
+    cash_session_use_case::get_reconciliation(pool, counted_cash.as_deref())
         .await
         .map_err(|e| {
             serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
@@ -75,7 +95,9 @@ pub async fn get_reconciliation(
 pub async fn get_session_history(
     state: State<'_, AppState>,
 ) -> Result<SessionHistoryResponse, String> {
-    cash_session_use_case::get_session_history(&state.db.pool())
+    let db = state.db.read().await;
+    let pool = super::usable_pool(&db)?;
+    cash_session_use_case::get_session_history(pool)
         .await
         .map_err(|e| {
             serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
@@ -88,7 +110,9 @@ pub async fn get_session_history(
 pub async fn list_closed_sessions(
     state: State<'_, AppState>,
 ) -> Result<Vec<ClosedSessionSummary>, String> {
-    cash_session_use_case::list_closed_sessions(&state.db.pool())
+    let db = state.db.read().await;
+    let pool = super::usable_pool(&db)?;
+    cash_session_use_case::list_closed_sessions(pool)
         .await
         .map_err(|e| {
             serde_json::to_string(&crate::domain::ErrorResponse::from(&e))
@@ -102,7 +126,9 @@ pub async fn get_closed_session_detail(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<ClosedSessionDetailResponse, String> {
-    cash_session_use_case::get_closed_session_detail(&state.db.pool(), &session_id)
+    let db = state.db.read().await;
+    let pool = super::usable_pool(&db)?;
+    cash_session_use_case::get_closed_session_detail(pool, &session_id)
         .await
         .map_err(|e| {
             serde_json::to_string(&crate::domain::ErrorResponse::from(&e))

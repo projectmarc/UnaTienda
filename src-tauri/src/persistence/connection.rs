@@ -8,7 +8,7 @@ use crate::domain::error::AppError;
 
 use std::collections::HashSet;
 
-const MIGRATIONS: [(i64, &str); 5] = [
+const MIGRATIONS: [(i64, &str); 6] = [
     (1, include_str!("../../migrations/001_initial.sql")),
     (
         2,
@@ -25,6 +25,10 @@ const MIGRATIONS: [(i64, &str); 5] = [
     (
         5,
         include_str!("../../migrations/005_add_sale_category_payment_qr.sql"),
+    ),
+    (
+        6,
+        include_str!("../../migrations/006_add_backup_metadata.sql"),
     ),
 ];
 
@@ -46,6 +50,8 @@ pub enum DbError {
     CreatePool(#[from] deadpool_sqlite::CreatePoolError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("database is unavailable: {0}")]
+    Unavailable(String),
 }
 
 impl From<DbError> for AppError {
@@ -56,6 +62,7 @@ impl From<DbError> for AppError {
             DbError::Interact(e) => AppError::Database(e.to_string()),
             DbError::CreatePool(e) => AppError::Database(e.to_string()),
             DbError::Io(e) => e.into(),
+            DbError::Unavailable(e) => AppError::DatabaseUnavailable { message: e },
         }
     }
 }
@@ -246,19 +253,63 @@ pub async fn run_migrations(pool: &Pool, db_path: &Path) -> Result<(), DbError> 
 #[derive(Clone)]
 pub struct AppDb {
     pool: Pool,
+    usable: bool,
+    failure: Option<String>,
 }
 
 impl AppDb {
     pub fn new(pool: Pool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            usable: true,
+            failure: None,
+        }
     }
 
-    pub fn pool(&self) -> &Pool {
-        &self.pool
+    pub fn pool(&self) -> Result<&Pool, AppError> {
+        if self.usable {
+            Ok(&self.pool)
+        } else {
+            Err(AppError::DatabaseUnavailable {
+                message: self
+                    .failure
+                    .clone()
+                    .unwrap_or_else(|| "restart the application to recover the database".into()),
+            })
+        }
+    }
+
+    /// Mark the shared handle unavailable before a journaled database replacement.
+    pub fn close(&mut self) {
+        self.pool.close();
+        self.usable = false;
+        self.failure = Some("database replacement is in progress".into());
+    }
+
+    pub fn replace_pool(&mut self, pool: Pool) {
+        self.pool = pool;
+        self.usable = true;
+        self.failure = None;
+    }
+
+    pub fn fail_closed(&mut self, reason: impl Into<String>) {
+        self.pool.close();
+        self.usable = false;
+        self.failure = Some(format!(
+            "{}; restart the application to complete backup recovery",
+            reason.into()
+        ));
     }
 
     pub async fn health_check(&self) -> Result<(), DbError> {
-        let conn = self.pool.get().await?;
+        let pool = if self.usable {
+            &self.pool
+        } else {
+            return Err(DbError::Unavailable(self.failure.clone().unwrap_or_else(
+                || "restart the application to recover the database".into(),
+            )));
+        };
+        let conn = pool.get().await?;
         conn.interact(|conn| {
             conn.pragma_query_value(None, "journal_mode", |row| {
                 let mode: String = row.get(0)?;
@@ -334,7 +385,7 @@ mod tests {
             assert!(tables.contains(&"schema_migrations".to_string()));
             assert!(tables.contains(&"backup_runs".to_string()));
 
-            for version in [1, 2, 3, 4, 5] {
+            for version in [1, 2, 3, 4, 5, 6] {
                 let migrations: i64 = conn
                     .query_row(
                         "SELECT count(*) FROM schema_migrations WHERE version = ?1",
@@ -350,6 +401,56 @@ mod tests {
             }
         })
         .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn migration_six_replays_with_legacy_backup_rows() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = open_pool(&db_path).await.unwrap();
+        let conn = pool.get().await.unwrap();
+        conn.interact(|conn| {
+            for (_, sql) in MIGRATIONS.iter().take(5) {
+                let tx = conn.transaction()?;
+                tx.execute_batch(sql)?;
+                tx.commit()?;
+            }
+            conn.execute(
+                "INSERT INTO backup_runs (id, run_at, path, success, error) VALUES (?1, ?2, ?3, 1, NULL)",
+                [
+                    "legacy-backup",
+                    "2026-08-03T10:00:00Z",
+                    "/legacy/unatienda.db",
+                ],
+            )?;
+            Ok::<_, rusqlite::Error>(())
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        drop(conn);
+
+        run_migrations(&pool, &db_path).await.unwrap();
+
+        let conn = pool.get().await.unwrap();
+        conn.interact(|conn| {
+            let kind: String = conn.query_row(
+                "SELECT kind FROM backup_runs WHERE id = 'legacy-backup'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(kind, "automatic");
+            let migration_six: i64 = conn.query_row(
+                "SELECT count(*) FROM schema_migrations WHERE version = 6",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(migration_six, 1);
+            Ok::<_, rusqlite::Error>(())
+        })
+        .await
+        .unwrap()
         .unwrap();
     }
 

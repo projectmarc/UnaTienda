@@ -113,12 +113,18 @@ pub async fn record_sale(
     sale_repo::validate_payment_sum(total_cents, &payment_parts)?;
 
     let request_hash = format!(
-        "record_sale:{}:{}",
+        "record_sale:{}:{}:{:?}:{}",
         total_cents,
-        request
-            .payments
+        category.as_str(),
+        request.detail.as_deref(),
+        payment_parts
             .iter()
-            .map(|p| format!("{}:{}", p.method, p.amount))
+            .map(|p| format!(
+                "{}:{}:{:?}",
+                p.method,
+                p.amount,
+                p.recipient_account.as_deref()
+            ))
             .collect::<Vec<_>>()
             .join(",")
     );

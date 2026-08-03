@@ -24,6 +24,8 @@ pub struct ClosedSessionResponse {
     pub expected_cash: String,
     pub counted_cash: String,
     pub difference: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_warning: Option<String>,
 }
 
 /// Reconciliation view for the current open session.
@@ -283,6 +285,7 @@ pub async fn close_session(
             expected_cash: Money::from_cents(expected_cash).to_string(),
             counted_cash: Money::from_cents(cash).to_string(),
             difference: Money::from_cents(difference).to_string(),
+            backup_warning: None,
         })
     })
     .await

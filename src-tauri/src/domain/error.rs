@@ -22,8 +22,14 @@ pub enum AppError {
     Io(String),
     #[error("incompatible backup")]
     IncompatibleBackup,
+    #[error("backup error: {0}")]
+    Backup(String),
+    #[error("restore is blocked while a cash session is open")]
+    RestoreBlockedOpenSession,
     #[error("database error: {0}")]
     Database(String),
+    #[error("database is unavailable and needs recovery: {message}")]
+    DatabaseUnavailable { message: String },
     #[error("not found")]
     NotFound,
 }
@@ -59,7 +65,10 @@ impl AppError {
             AppError::IdempotencyKeyReuse => "IDEMPOTENCY_KEY_REUSE",
             AppError::Io(_) => "IO",
             AppError::IncompatibleBackup => "INCOMPATIBLE_BACKUP",
+            AppError::Backup(_) => "BACKUP_FAILED",
+            AppError::RestoreBlockedOpenSession => "RESTORE_BLOCKED_OPEN_SESSION",
             AppError::Database(_) => "DATABASE",
+            AppError::DatabaseUnavailable { .. } => "DATABASE_UNAVAILABLE",
             AppError::NotFound => "NOT_FOUND",
         }
     }
@@ -68,7 +77,9 @@ impl AppError {
         match self {
             AppError::Conflict { .. } => true,
             AppError::Io(_) => true,
+            AppError::Backup(_) => true,
             AppError::Database(_) => true,
+            AppError::DatabaseUnavailable { .. } => true,
             _ => false,
         }
     }
@@ -132,8 +143,6 @@ impl Serialize for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
     #[test]
     fn error_serializes_public_shape() {
         let err = AppError::validation_field("amount is required", "amount");

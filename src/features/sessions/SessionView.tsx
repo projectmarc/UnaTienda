@@ -26,7 +26,10 @@ function formatMoney(value: string): string {
   return `${negative ? "-" : ""}$ ${grouped},${decimals.padEnd(2, "0")}`;
 }
 
-function errorMessage(action: "abrir" | "cerrar"): string {
+function errorMessage(action: "abrir" | "cerrar", error?: unknown): string {
+  if (String(error).includes("DATABASE_UNAVAILABLE")) {
+    return "La base de datos quedó protegida durante una recuperación. Reinicia la aplicación para continuar.";
+  }
   return `No se pudo ${action} la caja. Revisa la conexión e inténtalo de nuevo.`;
 }
 
@@ -60,10 +63,12 @@ export default function SessionView() {
       setSession(nextSession);
       try {
         setHistory(await getSessionHistory());
-      } catch {
+      } catch (historyError) {
         setHistory(null);
         setError(
-          "No se pudo consultar el historial de la sesión. Inténtalo de nuevo.",
+          String(historyError).includes("DATABASE_UNAVAILABLE")
+            ? "La base de datos quedó protegida durante una recuperación. Reinicia la aplicación para continuar."
+            : "No se pudo consultar el historial de la sesión. Inténtalo de nuevo.",
         );
       }
     } catch (err: unknown) {
@@ -74,6 +79,10 @@ export default function SessionView() {
       ) {
         setSession(null);
         setHistory(null);
+      } else if (message.includes("DATABASE_UNAVAILABLE")) {
+        setError(
+          "La base de datos quedó protegida durante una recuperación. Reinicia la aplicación para continuar.",
+        );
       } else {
         setError("No se pudo consultar la sesión de caja. Inténtalo de nuevo.");
       }
@@ -120,8 +129,8 @@ export default function SessionView() {
       await loadSession();
       setPhase("operation");
       openKeyRef.current = null;
-    } catch {
-      setError(errorMessage("abrir"));
+    } catch (error) {
+      setError(errorMessage("abrir", error));
     } finally {
       setOpening(false);
     }
@@ -142,8 +151,8 @@ export default function SessionView() {
       setSession(null);
       setHistory(null);
       closeKeyRef.current = null;
-    } catch {
-      setError(errorMessage("cerrar"));
+    } catch (error) {
+      setError(errorMessage("cerrar", error));
     } finally {
       setClosing(false);
     }
@@ -176,6 +185,15 @@ export default function SessionView() {
         <p className="mt-2 text-foreground-secondary">
           La conciliación quedó registrada y ya puedes iniciar una nueva sesión.
         </p>
+        {closedResult.backupWarning && (
+          <p
+            className="mt-4 border border-warning/40 bg-warning/10 p-4 text-sm text-warning-foreground"
+            role="alert"
+          >
+            {closedResult.backupWarning} La caja permanece cerrada; puedes
+            reintentar la copia desde Copias de seguridad.
+          </p>
+        )}
         <dl className="mt-8 grid border-y border-border sm:grid-cols-2">
           {[
             ["Efectivo inicial", closedResult.openingAmount],
