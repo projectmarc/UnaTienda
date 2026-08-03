@@ -90,6 +90,22 @@ describe("SessionView", () => {
     ).toBeInTheDocument();
   });
 
+  it("responde a la solicitud de Cierre del progreso persistente", async () => {
+    mockGetReconciliation.mockResolvedValue(openReconciliation);
+
+    const { rerender } = render(<SessionView requestedStep={null} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Registrar movimientos" }),
+    ).toBeInTheDocument();
+
+    rerender(<SessionView requestedStep="reconcile" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Conciliar caja" }),
+    ).toBeInTheDocument();
+  });
+
   it("reutiliza la clave de apertura al reintentar un error recuperable", async () => {
     const user = userEvent.setup();
     mockGetReconciliation.mockRejectedValue("NO_OPEN_SESSION");

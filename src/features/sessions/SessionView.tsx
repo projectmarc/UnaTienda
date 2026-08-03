@@ -27,10 +27,12 @@ export type SessionStep = "opening" | "operation" | "reconcile" | "closed";
 
 interface SessionViewProps {
   onProgressChange?: (step: SessionStep) => void;
+  requestedStep?: "reconcile" | null;
 }
 
 export default function SessionView({
   onProgressChange,
+  requestedStep,
 }: SessionViewProps = {}) {
   const [session, setSession] = useState<ReconciliationView | null>(null);
   const [history, setHistory] = useState<SessionHistoryResponse | null>(null);
@@ -58,6 +60,12 @@ export default function SessionView({
   useEffect(() => {
     onProgressChange?.(sessionStep);
   }, [onProgressChange, sessionStep]);
+
+  useEffect(() => {
+    if (requestedStep === "reconcile" && session) {
+      setPhase("reconcile");
+    }
+  }, [requestedStep, session]);
 
   const loadSession = useCallback(async (counted?: string) => {
     try {
